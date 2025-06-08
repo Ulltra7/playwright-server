@@ -57,7 +57,9 @@ export abstract class BaseScraper {
     return await this.page.content();
   }
 
-  protected async analyzePageStructure(): Promise<any> {
+  protected async analyzePageStructure(
+    customSelectors: string[] = []
+  ): Promise<any> {
     if (!this.page) {
       throw new Error("Browser not initialized. Call initBrowser() first.");
     }
@@ -66,25 +68,21 @@ export abstract class BaseScraper {
     const title = await this.page.title();
     const url = this.page.url();
 
-    // Look for common job listing patterns
-    const selectors = [
-      ".job",
-      ".job-item",
-      ".job-listing",
-      ".job-card",
-      '[class*="job"]',
-      '[data-testid*="job"]',
-      ".position",
-      ".vacancy",
-      ".opening",
+    // Default selectors for common content patterns
+    const defaultSelectors = [
       "article",
       ".card",
       ".item",
+      ".content",
+      ".entry",
       '[class*="listing"]',
       '[class*="card"]',
-      'a[href*="job"]',
-      'a[href*="position"]',
+      '[class*="item"]',
+      '[class*="content"]',
     ];
+
+    // Combine default selectors with any custom ones provided
+    const selectors = [...defaultSelectors, ...customSelectors];
 
     const foundElements: any = {};
 
@@ -119,26 +117,22 @@ export abstract class BaseScraper {
       url,
       foundElements,
       totalLinks: links.length,
-      jobRelatedLinks: links.filter(
-        (link) =>
-          link.href.includes("job") ||
-          link.text?.toLowerCase().includes("job") ||
-          link.text?.toLowerCase().includes("position") ||
-          link.text?.toLowerCase().includes("career")
-      ),
+      allLinks: links.slice(0, 20), // First 20 links for analysis
       bodyText:
         (await this.page.textContent("body"))?.substring(0, 500) + "...",
     };
   }
 
   // Method to analyze semantic attributes and structured data
-  protected async analyzeSemanticStructure(): Promise<any> {
+  protected async analyzeSemanticStructure(
+    customAttributes: string[] = []
+  ): Promise<any> {
     if (!this.page) {
       throw new Error("Browser not initialized. Call initBrowser() first.");
     }
 
     // Look for semantic attributes and structured data
-    const semanticData = await this.page.evaluate(() => {
+    const semanticData = await this.page.evaluate((customAttrs) => {
       const results: any = {
         labelAttributes: [],
         dataAttributes: [],
@@ -161,30 +155,42 @@ export abstract class BaseScraper {
         }
       });
 
-      // Find elements with data-* attributes related to company/organization
-      const dataElements = document.querySelectorAll(
-        "[data-company], [data-organization], [data-employer], [data-hiring-organization]"
-      );
-      dataElements.forEach((el, index) => {
-        if (index < 10) {
-          const attrs: any = {};
-          for (const attr of el.attributes) {
-            if (attr.name.startsWith("data-")) {
-              attrs[attr.name] = attr.value;
+      // Find elements with data-* attributes - use custom attributes if provided
+      const defaultDataAttrs = [
+        "data-id",
+        "data-name",
+        "data-type",
+        "data-content",
+      ];
+      const dataAttrsToSearch =
+        customAttrs.length > 0 ? customAttrs : defaultDataAttrs;
+
+      const dataSelector = dataAttrsToSearch
+        .map((attr) => `[${attr}]`)
+        .join(", ");
+      if (dataSelector) {
+        const dataElements = document.querySelectorAll(dataSelector);
+        dataElements.forEach((el, index) => {
+          if (index < 10) {
+            const attrs: any = {};
+            for (const attr of el.attributes) {
+              if (attr.name.startsWith("data-")) {
+                attrs[attr.name] = attr.value;
+              }
             }
+            results.dataAttributes.push({
+              attributes: attrs,
+              tagName: el.tagName,
+              textContent: el.textContent?.trim().substring(0, 100),
+              className: el.className,
+            });
           }
-          results.dataAttributes.push({
-            attributes: attrs,
-            tagName: el.tagName,
-            textContent: el.textContent?.trim().substring(0, 100),
-            className: el.className,
-          });
-        }
-      });
+        });
+      }
 
       // Look for Schema.org structured data
       const schemaElements = document.querySelectorAll(
-        '[itemtype*="schema.org"], [itemtype*="JobPosting"], [itemtype*="Organization"]'
+        '[itemtype*="schema.org"]'
       );
       schemaElements.forEach((el, index) => {
         if (index < 10) {
@@ -202,17 +208,8 @@ export abstract class BaseScraper {
       const microdataElements = document.querySelectorAll("[itemprop]");
       microdataElements.forEach((el, index) => {
         if (index < 20) {
-          // More microdata elements might be relevant
           const itemprop = el.getAttribute("itemprop");
-          if (
-            itemprop &&
-            (itemprop.includes("company") ||
-              itemprop.includes("organization") ||
-              itemprop.includes("employer") ||
-              itemprop.includes("hiringOrganization") ||
-              itemprop.includes("name") ||
-              itemprop.includes("location"))
-          ) {
+          if (itemprop) {
             results.microdata.push({
               itemprop: itemprop,
               tagName: el.tagName,
@@ -239,7 +236,7 @@ export abstract class BaseScraper {
       });
 
       return results;
-    });
+    }, customAttributes);
 
     return semanticData;
   }
@@ -263,8 +260,6 @@ export abstract class BaseScraper {
         el.style.backgroundColor = "rgba(255, 0, 0, 0.1)";
       });
 
-      await this.takeScreenshot(`job-card-debug-${index}.png`);
-
       // Get all text content from the element for debugging
       const allText = await element.textContent();
       console.log(
@@ -284,5 +279,5 @@ export abstract class BaseScraper {
   }
 
   // Abstract method that each scraper must implement
-  abstract scrapeJobs(): Promise<any>;
+  abstract scrape(): Promise<any>;
 }

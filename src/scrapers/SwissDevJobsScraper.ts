@@ -1,8 +1,8 @@
-import { BaseScraper } from "../services/BaseScraper";
+import { JobScraper } from "../services/JobScraper";
 import { JOB_SITES } from "../constants/urls";
 import { JobListing, ScraperResult } from "../types/job";
 
-export class SwissDevJobsScraper extends BaseScraper {
+export class SwissDevJobsScraper extends JobScraper {
   async scrapeJobs(): Promise<ScraperResult> {
     try {
       console.log("🔍 Starting Swiss Dev Jobs scraper...");
@@ -12,12 +12,12 @@ export class SwissDevJobsScraper extends BaseScraper {
 
       console.log("📋 Page loaded successfully. Analyzing page structure...");
 
-      // Analyze page structure first
-      const pageAnalysis = await this.analyzePageStructure();
+      // Analyze page structure with job-specific selectors
+      const pageAnalysis = await this.analyzeJobPageStructure();
       console.log("🔍 Page analysis:", JSON.stringify(pageAnalysis, null, 2));
 
       // Analyze semantic structure for better data extraction
-      const semanticAnalysis = await this.analyzeSemanticStructure();
+      const semanticAnalysis = await this.analyzeJobSemanticStructure();
       console.log(
         "🏷️ Semantic analysis:",
         JSON.stringify(semanticAnalysis, null, 2)
@@ -75,39 +75,8 @@ export class SwissDevJobsScraper extends BaseScraper {
             : "";
 
           // Extract company and location using semantic attributes first
-          let company = "";
-          let location = "";
-
-          // 1. First try semantic attributes (most reliable)
-          const companyByLabel = await element.$(
-            '[label*="hiring"], [label*="organization"], [label*="company"], [label*="employer"]'
-          );
-          if (companyByLabel) {
-            company = (await companyByLabel.textContent())?.trim() || "";
-            console.log(`🏷️ Found company by label: "${company}"`);
-          }
-
-          // 2. Try data attributes
-          if (!company) {
-            const companyByData = await element.$(
-              "[data-company], [data-organization], [data-employer], [data-hiring-organization]"
-            );
-            if (companyByData) {
-              company = (await companyByData.textContent())?.trim() || "";
-              console.log(`📊 Found company by data attribute: "${company}"`);
-            }
-          }
-
-          // 3. Try microdata/schema.org attributes
-          if (!company) {
-            const companyByMicrodata = await element.$(
-              '[itemprop="hiringOrganization"], [itemprop="company"], [itemprop="organization"]'
-            );
-            if (companyByMicrodata) {
-              company = (await companyByMicrodata.textContent())?.trim() || "";
-              console.log(`🔗 Found company by microdata: "${company}"`);
-            }
-          }
+          let company = await this.extractCompanyBySemantic(element);
+          let location = await this.extractLocationBySemantic(element);
 
           // 4. Fallback to parsing combined company+location links (original approach)
           if (!company) {
