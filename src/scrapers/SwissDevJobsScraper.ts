@@ -10,7 +10,13 @@ export class SwissDevJobsScraper extends JobScraper {
       await this.initBrowser();
       await this.navigateToUrl(JOB_SITES.SWISS_DEV_JOBS.ALL_JOBS);
 
-      console.log("📋 Page loaded successfully. Analyzing page structure...");
+      console.log("📋 Page loaded successfully. Waiting for initial content...");
+      
+      // Wait for job cards to load initially
+      if (this.page) {
+        await this.page.waitForSelector(".card", { timeout: 10000 });
+        console.log("✅ Initial job cards loaded");
+      }
 
       // Analyze page structure with job-specific selectors
       const pageAnalysis = await this.analyzeJobPageStructure();
@@ -51,11 +57,15 @@ export class SwissDevJobsScraper extends JobScraper {
     }
 
     try {
-      // Based on the analysis, job cards use the .card selector
+      // First, scroll down to load all jobs with infinite scroll
+      console.log("📜 Starting infinite scroll to load all jobs...");
+      await this.scrollToLoadAllJobs();
+
+      // Now get all job cards after scrolling
       const jobElements = await this.page.$$(".card");
       const jobs: JobListing[] = [];
 
-      console.log(`📋 Found ${jobElements.length} job cards to extract`);
+      console.log(`📋 Found ${jobElements.length} job cards to extract after scrolling`);
 
       for (let i = 0; i < jobElements.length; i++) {
         try {
@@ -233,4 +243,98 @@ export class SwissDevJobsScraper extends JobScraper {
       return [];
     }
   }
+
+  private async scrollToLoadAllJobs(): Promise<void> {
+    if (!this.page) {
+      throw new Error("Browser not initialized");
+    }
+
+    try {
+      let previousJobCount = 0;
+      let currentJobCount = 0;
+      let scrollAttempts = 0;
+      const maxScrollAttempts = 50; // Prevent infinite loops
+      const scrollDelay = 1000; // Wait 1 second between scrolls
+
+      console.log("🔄 Starting infinite scroll to load all jobs...");
+
+      while (scrollAttempts < maxScrollAttempts) {
+        // Count current job cards
+        const jobCards = await this.page.$$(".card");
+        currentJobCount = jobCards.length;
+
+        console.log(`📊 Scroll attempt ${scrollAttempts + 1}: Found ${currentJobCount} job cards`);
+
+        // If no new jobs were loaded in the last scroll, we might be done
+        if (currentJobCount === previousJobCount && scrollAttempts > 2) {
+          // Double-check by trying to scroll more and waiting longer
+          await this.page.evaluate(() => {
+            window.scrollTo(0, document.body.scrollHeight);
+          });
+          await this.page.waitForTimeout(2000); // Wait 2 seconds
+          
+          const finalJobCards = await this.page.$$(".card");
+          if (finalJobCards.length === currentJobCount) {
+            console.log(`✅ Infinite scroll complete. No new jobs loaded after extra wait.`);
+            break;
+          }
+          currentJobCount = finalJobCards.length;
+        }
+
+        // Scroll to bottom of page
+        await this.page.evaluate(() => {
+          window.scrollTo(0, document.body.scrollHeight);
+        });
+
+        // Wait for new content to load
+        await this.page.waitForTimeout(scrollDelay);
+
+        // Look for loading indicators or "Load More" buttons
+        try {
+          // Check for loading spinner or "Load More" button
+          const loadMoreButton = await this.page.$('button:has-text("Load More"), button:has-text("Show More"), .load-more, [class*="load-more"]');
+          if (loadMoreButton) {
+            console.log("🔘 Found 'Load More' button, clicking it...");
+            await loadMoreButton.click();
+            await this.page.waitForTimeout(2000); // Wait for new content
+          }
+
+          // Check for loading indicator
+          const loadingIndicator = await this.page.$('.loading, [class*="loading"], .spinner, [class*="spinner"]');
+          if (loadingIndicator) {
+            console.log("⏳ Waiting for loading to complete...");
+            await this.page.waitForSelector('.loading, [class*="loading"], .spinner, [class*="spinner"]', { 
+              state: 'detached',
+              timeout: 10000 
+            });
+          }
+        } catch (error) {
+          // No loading indicators found, continue with normal scroll
+        }
+
+        previousJobCount = currentJobCount;
+        scrollAttempts++;
+
+        // Extra check: if we've loaded a lot of jobs, maybe we're done
+        if (currentJobCount >= 300) {
+          console.log(`🎯 Loaded ${currentJobCount} jobs, that seems like all of them. Stopping scroll.`);
+          break;
+        }
+      }
+
+      console.log(`🏁 Infinite scroll completed after ${scrollAttempts} attempts. Total jobs loaded: ${currentJobCount}`);
+
+      // Final scroll to top to ensure all elements are properly rendered
+      await this.page.evaluate(() => {
+        window.scrollTo(0, 0);
+      });
+      await this.page.waitForTimeout(1000);
+
+    } catch (error) {
+      console.error("❌ Error during infinite scroll:", error);
+      // Continue anyway with whatever jobs we have loaded
+    }
+  }
+
+  // ...existing code...
 }
