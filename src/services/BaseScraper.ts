@@ -39,11 +39,247 @@ export abstract class BaseScraper {
     return { title, url };
   }
 
+  // Add debugging methods
+  protected async takeScreenshot(
+    filename: string = "debug-screenshot.png"
+  ): Promise<void> {
+    if (!this.page) {
+      throw new Error("Browser not initialized. Call initBrowser() first.");
+    }
+    await this.page.screenshot({ path: filename, fullPage: true });
+    console.log(`📸 Screenshot saved as ${filename}`);
+  }
+
+  protected async getPageSource(): Promise<string> {
+    if (!this.page) {
+      throw new Error("Browser not initialized. Call initBrowser() first.");
+    }
+    return await this.page.content();
+  }
+
+  protected async analyzePageStructure(): Promise<any> {
+    if (!this.page) {
+      throw new Error("Browser not initialized. Call initBrowser() first.");
+    }
+
+    // Get basic page info
+    const title = await this.page.title();
+    const url = this.page.url();
+
+    // Look for common job listing patterns
+    const selectors = [
+      ".job",
+      ".job-item",
+      ".job-listing",
+      ".job-card",
+      '[class*="job"]',
+      '[data-testid*="job"]',
+      ".position",
+      ".vacancy",
+      ".opening",
+      "article",
+      ".card",
+      ".item",
+      '[class*="listing"]',
+      '[class*="card"]',
+      'a[href*="job"]',
+      'a[href*="position"]',
+    ];
+
+    const foundElements: any = {};
+
+    for (const selector of selectors) {
+      try {
+        const elements = await this.page.$$(selector);
+        if (elements.length > 0) {
+          const firstElementText = await elements[0].textContent();
+          foundElements[selector] = {
+            count: elements.length,
+            firstElementText: firstElementText?.substring(0, 200) + "...",
+          };
+        }
+      } catch (error) {
+        // Selector might be invalid, continue
+      }
+    }
+
+    // Get all links to analyze navigation structure
+    const links = await this.page.$$eval("a", (anchors) =>
+      anchors
+        .map((anchor) => ({
+          href: anchor.href,
+          text: anchor.textContent?.trim(),
+          className: anchor.className,
+        }))
+        .filter((link) => link.text && link.text.length > 0)
+    );
+
+    return {
+      title,
+      url,
+      foundElements,
+      totalLinks: links.length,
+      jobRelatedLinks: links.filter(
+        (link) =>
+          link.href.includes("job") ||
+          link.text?.toLowerCase().includes("job") ||
+          link.text?.toLowerCase().includes("position") ||
+          link.text?.toLowerCase().includes("career")
+      ),
+      bodyText:
+        (await this.page.textContent("body"))?.substring(0, 500) + "...",
+    };
+  }
+
+  // Method to analyze semantic attributes and structured data
+  protected async analyzeSemanticStructure(): Promise<any> {
+    if (!this.page) {
+      throw new Error("Browser not initialized. Call initBrowser() first.");
+    }
+
+    // Look for semantic attributes and structured data
+    const semanticData = await this.page.evaluate(() => {
+      const results: any = {
+        labelAttributes: [],
+        dataAttributes: [],
+        schemaOrgData: [],
+        microdata: [],
+        jsonLd: [],
+      };
+
+      // Find elements with label attributes
+      const labelElements = document.querySelectorAll("[label]");
+      labelElements.forEach((el, index) => {
+        if (index < 10) {
+          // Limit to first 10 for performance
+          results.labelAttributes.push({
+            label: el.getAttribute("label"),
+            tagName: el.tagName,
+            textContent: el.textContent?.trim().substring(0, 100),
+            className: el.className,
+          });
+        }
+      });
+
+      // Find elements with data-* attributes related to company/organization
+      const dataElements = document.querySelectorAll(
+        "[data-company], [data-organization], [data-employer], [data-hiring-organization]"
+      );
+      dataElements.forEach((el, index) => {
+        if (index < 10) {
+          const attrs: any = {};
+          for (const attr of el.attributes) {
+            if (attr.name.startsWith("data-")) {
+              attrs[attr.name] = attr.value;
+            }
+          }
+          results.dataAttributes.push({
+            attributes: attrs,
+            tagName: el.tagName,
+            textContent: el.textContent?.trim().substring(0, 100),
+            className: el.className,
+          });
+        }
+      });
+
+      // Look for Schema.org structured data
+      const schemaElements = document.querySelectorAll(
+        '[itemtype*="schema.org"], [itemtype*="JobPosting"], [itemtype*="Organization"]'
+      );
+      schemaElements.forEach((el, index) => {
+        if (index < 10) {
+          results.schemaOrgData.push({
+            itemtype: el.getAttribute("itemtype"),
+            itemscope: el.getAttribute("itemscope"),
+            tagName: el.tagName,
+            textContent: el.textContent?.trim().substring(0, 100),
+            className: el.className,
+          });
+        }
+      });
+
+      // Look for microdata properties
+      const microdataElements = document.querySelectorAll("[itemprop]");
+      microdataElements.forEach((el, index) => {
+        if (index < 20) {
+          // More microdata elements might be relevant
+          const itemprop = el.getAttribute("itemprop");
+          if (
+            itemprop &&
+            (itemprop.includes("company") ||
+              itemprop.includes("organization") ||
+              itemprop.includes("employer") ||
+              itemprop.includes("hiringOrganization") ||
+              itemprop.includes("name") ||
+              itemprop.includes("location"))
+          ) {
+            results.microdata.push({
+              itemprop: itemprop,
+              tagName: el.tagName,
+              textContent: el.textContent?.trim().substring(0, 100),
+              className: el.className,
+            });
+          }
+        }
+      });
+
+      // Look for JSON-LD structured data
+      const jsonLdScripts = document.querySelectorAll(
+        'script[type="application/ld+json"]'
+      );
+      jsonLdScripts.forEach((script, index) => {
+        if (index < 5) {
+          try {
+            const jsonData = JSON.parse(script.textContent || "");
+            results.jsonLd.push(jsonData);
+          } catch (e) {
+            // Invalid JSON, skip
+          }
+        }
+      });
+
+      return results;
+    });
+
+    return semanticData;
+  }
+
   protected async closeBrowser(): Promise<void> {
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
       this.page = null;
+    }
+  }
+
+  // Debugging method to analyze job card structure
+  protected async debugJobCard(element: any, index: number): Promise<void> {
+    if (!this.page) return;
+
+    try {
+      // Highlight the job card and take a screenshot
+      await element.evaluate((el: any) => {
+        el.style.border = "3px solid red";
+        el.style.backgroundColor = "rgba(255, 0, 0, 0.1)";
+      });
+
+      await this.takeScreenshot(`job-card-debug-${index}.png`);
+
+      // Get all text content from the element for debugging
+      const allText = await element.textContent();
+      console.log(
+        `🔍 Job card ${index} content:`,
+        allText?.substring(0, 300) + "..."
+      );
+
+      // Get HTML structure
+      const innerHTML = await element.innerHTML();
+      console.log(
+        `🔍 Job card ${index} HTML structure:`,
+        innerHTML.substring(0, 500) + "..."
+      );
+    } catch (error) {
+      console.log(`⚠️ Error debugging job card ${index}:`, error);
     }
   }
 

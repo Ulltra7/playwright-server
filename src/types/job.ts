@@ -5,6 +5,7 @@ export interface JobListing {
   location: string;
   description?: string;
   requirements?: string[];
+  technologies?: string[];
   salary?: string;
   url: string;
   postedDate?: Date;
@@ -24,5 +25,6 @@ export interface ScraperResult {
   title: string;
   jobs?: JobListing[];
   totalJobs?: number;
+  pageAnalysis?: any;
   note?: string;
 }

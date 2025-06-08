@@ -1,7 +1,7 @@
 export const JOB_SITES = {
   SWISS_DEV_JOBS: {
     BASE_URL: "https://swissdevjobs.ch",
-    ALL_JOBS: "https://swissdevjobs.ch/de/jobs/all",
+    ALL_JOBS: "https://swissdevjobs.ch/",
     NAME: "Swiss Dev Jobs",
   },
 } as const;
