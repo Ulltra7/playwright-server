@@ -10,8 +10,10 @@ export class SwissDevJobsScraper extends JobScraper {
       await this.initBrowser();
       await this.navigateToUrl(JOB_SITES.SWISS_DEV_JOBS.ALL_JOBS);
 
-      console.log("📋 Page loaded successfully. Waiting for initial content...");
-      
+      console.log(
+        "📋 Page loaded successfully. Waiting for initial content..."
+      );
+
       // Wait for job cards to load initially
       if (this.page) {
         await this.page.waitForSelector(".card", { timeout: 10000 });
@@ -57,191 +59,249 @@ export class SwissDevJobsScraper extends JobScraper {
     }
 
     try {
-      // First, scroll down to load all jobs with infinite scroll
-      console.log("📜 Starting infinite scroll to load all jobs...");
-      await this.scrollToLoadAllJobs();
+      console.log("📜 Starting incremental scroll to collect all jobs...");
+      
+      // Use our improved scrolling method that collects jobs as it goes
+      const allCollectedJobs = await this.scrollAndCollectAllJobs();
 
-      // Now get all job cards after scrolling
-      const jobElements = await this.page.$$(".card");
-      const jobs: JobListing[] = [];
-
-      console.log(`📋 Found ${jobElements.length} job cards to extract after scrolling`);
-
-      for (let i = 0; i < jobElements.length; i++) {
-        try {
-          const element = jobElements[i];
-
-          // Debug the first 3 job cards to understand structure
-          if (i < 3) {
-            await this.debugJobCard(element, i);
-          }
-
-          // Extract job title (usually the first link or heading)
-          const titleElement = await element.$(
-            'a[href*="job"], h1, h2, h3, h4, h5, h6, .job-title, [class*="title"]'
-          );
-          const title = titleElement
-            ? (await titleElement.textContent())?.trim() || ""
-            : "";
-
-          // Extract company and location using semantic attributes first
-          let company = await this.extractCompanyBySemantic(element);
-          let location = await this.extractLocationBySemantic(element);
-
-          // 4. Fallback to parsing combined company+location links (original approach)
-          if (!company) {
-            // Get all links in the job card
-            const allLinks = await element.$$("a");
-
-            // Look for the link that contains company + address (not the job title link or tech links)
-            for (const link of allLinks) {
-              const linkText = (await link.textContent())?.trim() || "";
-              const linkHref = (await link.getAttribute("href")) || "";
-
-              // Skip job title links, tech category links, and other non-company links
-              if (
-                linkHref.includes("/jobs/") &&
-                !linkHref.includes("/jobs/TypeScript") &&
-                !linkHref.includes("/jobs/JavaScript") &&
-                !linkHref.includes("/jobs/Frontend") &&
-                !linkHref.includes("/jobs/Angular") &&
-                !linkHref.includes("/jobs/Backend") &&
-                !linkHref.includes("/jobs/API") &&
-                !linkHref.includes("/jobs/Cloud") &&
-                !linkHref.includes("/jobs/Azure") &&
-                !linkHref.includes("/jobs/C#") &&
-                !linkHref.includes("/jobs/CI/CD") &&
-                !linkHref.includes("/jobs/Cypress") &&
-                !linkHref.includes("/jobs/ROS") &&
-                linkText.length > 10 && // Company + address should be longer
-                (linkText.includes("AG") ||
-                  linkText.includes("GmbH") ||
-                  linkText.includes("SA") ||
-                  linkText.includes("strasse") ||
-                  linkText.includes("gasse") ||
-                  linkText.includes(","))
-              ) {
-                console.log(`🔍 Found company link: "${linkText}"`);
-
-                // Parse company and location from combined text
-                const companyPatterns = [
-                  /^(.+?\s(?:AG|GmbH|SA|Ltd|Inc|Corp|LLC|AB|Oy))\s*(.+)$/i,
-                  /^(.+?)\s+([A-Z][a-z]+(?:strasse|gasse|weg|platz|ring)\s*\d+.*)$/i,
-                ];
-
-                let extracted = false;
-                for (const pattern of companyPatterns) {
-                  const match = linkText.match(pattern);
-                  if (match) {
-                    company = match[1].trim();
-                    location = match[2].trim();
-                    extracted = true;
-                    console.log(
-                      `✅ Parsed: Company="${company}", Location="${location}"`
-                    );
-                    break;
-                  }
-                }
-
-                if (extracted) break;
-              }
-            }
-          }
-
-          // If we couldn't extract company from the combined field, try other selectors
-          if (!company) {
-            const fallbackSelectors = [
-              ".company-name",
-              '[class*="company"]',
-              ".employer",
-              '[class*="employer"]',
-              "h4",
-              ".text-muted",
-              "small",
-            ];
-
-            for (const selector of fallbackSelectors) {
-              const companyElement = await element.$(selector);
-              if (companyElement) {
-                const companyText =
-                  (await companyElement.textContent())?.trim() || "";
-                if (
-                  companyText &&
-                  !companyText.includes("CHF") &&
-                  !companyText.includes("€") &&
-                  !companyText.includes("$")
-                ) {
-                  company = companyText;
-                  break;
-                }
-              }
-            }
-          }
-
-          // Extract job URL
-          const linkElement = await element.$('a[href*="job"]');
-          const jobUrl = linkElement
-            ? (await linkElement.getAttribute("href")) || ""
-            : "";
-
-          // Extract salary if available
-          const salaryElement = await element.$(
-            '[class*="salary"], [class*="wage"], [class*="chf"], [class*="€"], [class*="$"]'
-          );
-          const salary = salaryElement
-            ? (await salaryElement.textContent())?.trim() || ""
-            : "";
-
-          // Extract technology badges
-          const technologies: string[] = [];
-          const techBadgesContainer = await element.$(
-            ".job-teaser-technology-badges"
-          );
-          if (techBadgesContainer) {
-            const techBadges = await techBadgesContainer.$$(
-              ".technology-badge, .badge"
-            );
-            for (const badge of techBadges) {
-              const techText = (await badge.textContent())?.trim();
-              if (techText && techText.length > 0) {
-                technologies.push(techText);
-              }
-            }
-          }
-
-          // Only add jobs with at least a title
-          if (title && title.length > 0) {
-            const job: JobListing = {
-              title,
-              company: company || "Unknown Company",
-              location: location || "Location not specified",
-              technologies,
-              url: jobUrl.startsWith("http")
-                ? jobUrl
-                : `https://swissdevjobs.ch${jobUrl}`,
-              salary: salary || undefined,
-              scraped_at: new Date(),
-            };
-
-            jobs.push(job);
-            console.log(
-              `✅ Extracted job ${
-                i + 1
-              }: ${title} at ${company} | Tech: ${technologies.join(", ")}`
-            );
-          }
-        } catch (error) {
-          console.log(`⚠️ Error extracting job ${i + 1}:`, error);
-          continue;
-        }
-      }
-
-      console.log(`📊 Successfully extracted ${jobs.length} jobs`);
-      return jobs;
+      console.log(`📊 Successfully collected ${allCollectedJobs.length} total jobs through incremental scrolling`);
+      return allCollectedJobs;
     } catch (error) {
       console.error("❌ Error in extractJobListings:", error);
       return [];
     }
+  }
+
+  private async scrollAndCollectAllJobs(): Promise<JobListing[]> {
+    if (!this.page) {
+      throw new Error("Browser not initialized");
+    }
+
+    const allJobs: JobListing[] = [];
+    const jobsMap = new Map<string, JobListing>(); // Use Map to avoid duplicates
+    let scrollAttempts = 0;
+    const maxScrollAttempts = 100;
+    const scrollDelay = 800;
+
+    try {
+      console.log("🔄 Starting comprehensive job collection with incremental scroll...");
+
+      // Get container info
+      const containerInfo = await this.page.evaluate(() => {
+        const scrollableContainers = Array.from(document.querySelectorAll('div')).filter(div => {
+          const style = window.getComputedStyle(div);
+          return style.overflow === 'auto' && 
+                 style.position === 'relative' && 
+                 (style.willChange === 'transform' || div.style.willChange === 'transform');
+        });
+
+        if (scrollableContainers.length > 0) {
+          const container = scrollableContainers[0];
+          return {
+            found: true,
+            scrollHeight: container.scrollHeight,
+            clientHeight: container.clientHeight,
+            maxScroll: container.scrollHeight - container.clientHeight
+          };
+        }
+        return { 
+          found: false,
+          scrollHeight: 0,
+          clientHeight: 0,
+          maxScroll: 0
+        };
+      });
+
+      if (!containerInfo.found || containerInfo.maxScroll <= 0) {
+        console.log("❌ No virtualized container found, falling back to current page jobs");
+        const currentJobs = await this.page.$$(".card");
+        return this.extractJobsFromElements(currentJobs);
+      }
+
+      const scrollIncrement = Math.max(containerInfo.clientHeight / 3, 100);
+      console.log(`📐 Container: ${containerInfo.scrollHeight}px height, will scroll in ${scrollIncrement}px increments`);
+
+      // Scroll through the entire list incrementally
+      for (let position = 0; position <= containerInfo.maxScroll; position += scrollIncrement) {
+        scrollAttempts++;
+        
+        console.log(`📜 Scroll ${scrollAttempts}: position ${position}/${containerInfo.maxScroll}`);
+
+        // Scroll to position
+        await this.page.evaluate((targetPosition) => {
+          const container = Array.from(document.querySelectorAll('div')).find(div => {
+            const style = window.getComputedStyle(div);
+            return style.overflow === 'auto' && style.position === 'relative';
+          });
+          
+          if (container) {
+            container.scrollTop = targetPosition;
+            container.dispatchEvent(new Event('scroll', { bubbles: true }));
+          }
+        }, position);
+
+        await this.page.waitForTimeout(scrollDelay);
+
+        // Extract jobs from currently visible cards
+        const currentJobElements = await this.page.$$(".card");
+        const currentJobs = await this.extractJobsFromElements(currentJobElements);
+        
+        // Add to our collection (Map will handle duplicates)
+        let newJobsCount = 0;
+        for (const job of currentJobs) {
+          const jobKey = `${job.title}_${job.url}`.replace(/\s+/g, '_');
+          if (!jobsMap.has(jobKey)) {
+            jobsMap.set(jobKey, job);
+            newJobsCount++;
+          }
+        }
+
+        console.log(`📋 Found ${currentJobs.length} visible jobs, ${newJobsCount} new unique jobs (total: ${jobsMap.size})`);
+
+        if (scrollAttempts >= maxScrollAttempts) {
+          console.log("🛑 Reached maximum scroll attempts");
+          break;
+        }
+      }
+
+      // Convert Map back to array
+      const uniqueJobs = Array.from(jobsMap.values());
+      console.log(`🏁 Collection complete: ${uniqueJobs.length} unique jobs found`);
+
+      return uniqueJobs;
+
+    } catch (error) {
+      console.error("❌ Error during job collection:", error);
+      // Return what we have collected so far
+      return Array.from(jobsMap.values());
+    }
+  }
+
+  private async extractJobsFromElements(jobElements: any[]): Promise<JobListing[]> {
+    const jobs: JobListing[] = [];
+
+    for (let i = 0; i < jobElements.length; i++) {
+      try {
+        const element = jobElements[i];
+
+        // Extract job title
+        const titleElement = await element.$(
+          'a[href*="job"], h1, h2, h3, h4, h5, h6, .job-title, [class*="title"]'
+        );
+        const title = titleElement
+          ? (await titleElement.textContent())?.trim() || ""
+          : "";
+
+        if (!title || title.length === 0) {
+          continue; // Skip jobs without titles
+        }
+
+        // Extract company and location using semantic attributes first
+        let company = await this.extractCompanyBySemantic(element);
+        let location = await this.extractLocationBySemantic(element);
+
+        // Fallback to parsing combined company+location links
+        if (!company) {
+          const allLinks = await element.$$("a");
+
+          for (const link of allLinks) {
+            const linkText = (await link.textContent())?.trim() || "";
+            const linkHref = (await link.getAttribute("href")) || "";
+
+            if (
+              linkHref.includes("/jobs/") &&
+              !linkHref.includes("/jobs/TypeScript") &&
+              !linkHref.includes("/jobs/JavaScript") &&
+              !linkHref.includes("/jobs/Frontend") &&
+              !linkHref.includes("/jobs/Angular") &&
+              !linkHref.includes("/jobs/Backend") &&
+              !linkHref.includes("/jobs/API") &&
+              !linkHref.includes("/jobs/Cloud") &&
+              !linkHref.includes("/jobs/Azure") &&
+              !linkHref.includes("/jobs/C#") &&
+              !linkHref.includes("/jobs/CI/CD") &&
+              !linkHref.includes("/jobs/Cypress") &&
+              !linkHref.includes("/jobs/ROS") &&
+              linkText.length > 10 &&
+              (linkText.includes("AG") ||
+                linkText.includes("GmbH") ||
+                linkText.includes("SA") ||
+                linkText.includes("strasse") ||
+                linkText.includes("gasse") ||
+                linkText.includes(","))
+            ) {
+              const companyPatterns = [
+                /^(.+?\s(?:AG|GmbH|SA|Ltd|Inc|Corp|LLC|AB|Oy))\s*(.+)$/i,
+                /^(.+?)\s+([A-Z][a-z]+(?:strasse|gasse|weg|platz|ring)\s*\d+.*)$/i,
+              ];
+
+              let extracted = false;
+              for (const pattern of companyPatterns) {
+                const match = linkText.match(pattern);
+                if (match) {
+                  company = match[1].trim();
+                  location = match[2].trim();
+                  extracted = true;
+                  break;
+                }
+              }
+
+              if (extracted) break;
+            }
+          }
+        }
+
+        // Extract job URL
+        const linkElement = await element.$('a[href*="job"]');
+        const jobUrl = linkElement
+          ? (await linkElement.getAttribute("href")) || ""
+          : "";
+
+        // Extract salary if available
+        const salaryElement = await element.$(
+          '[class*="salary"], [class*="wage"], [class*="chf"], [class*="€"], [class*="$"]'
+        );
+        const salary = salaryElement
+          ? (await salaryElement.textContent())?.trim() || ""
+          : "";
+
+        // Extract technology badges
+        const technologies: string[] = [];
+        const techBadgesContainer = await element.$(
+          ".job-teaser-technology-badges"
+        );
+        if (techBadgesContainer) {
+          const techBadges = await techBadgesContainer.$$(
+            ".technology-badge, .badge"
+          );
+          for (const badge of techBadges) {
+            const techText = (await badge.textContent())?.trim();
+            if (techText && techText.length > 0) {
+              technologies.push(techText);
+            }
+          }
+        }
+
+        const job: JobListing = {
+          title,
+          company: company || "Unknown Company",
+          location: location || "Location not specified",
+          technologies,
+          url: jobUrl.startsWith("http")
+            ? jobUrl
+            : `https://swissdevjobs.ch${jobUrl}`,
+          salary: salary || undefined,
+          scraped_at: new Date(),
+        };
+
+        jobs.push(job);
+      } catch (error) {
+        console.log(`⚠️ Error extracting job ${i + 1}:`, error);
+        continue;
+      }
+    }
+
+    return jobs;
   }
 
   private async scrollToLoadAllJobs(): Promise<void> {
@@ -253,85 +313,162 @@ export class SwissDevJobsScraper extends JobScraper {
       let previousJobCount = 0;
       let currentJobCount = 0;
       let scrollAttempts = 0;
-      const maxScrollAttempts = 50; // Prevent infinite loops
-      const scrollDelay = 1000; // Wait 1 second between scrolls
+      const maxScrollAttempts = 100; // Increased for incremental scrolling
+      const scrollDelay = 800; // Faster for incremental scrolling
+      let noChangeAttempts = 0;
+      let allJobsSet = new Set<string>(); // Track unique jobs
 
-      console.log("🔄 Starting infinite scroll to load all jobs...");
+      console.log("🔄 Starting incremental scroll for virtualized list...");
 
-      while (scrollAttempts < maxScrollAttempts) {
-        // Count current job cards
-        const jobCards = await this.page.$$(".card");
-        currentJobCount = jobCards.length;
+      // Get initial count
+      const initialCards = await this.page.$$(".card");
+      currentJobCount = initialCards.length;
+      console.log(`📊 Initial job count: ${currentJobCount} cards`);
 
-        console.log(`📊 Scroll attempt ${scrollAttempts + 1}: Found ${currentJobCount} job cards`);
-
-        // If no new jobs were loaded in the last scroll, we might be done
-        if (currentJobCount === previousJobCount && scrollAttempts > 2) {
-          // Double-check by trying to scroll more and waiting longer
-          await this.page.evaluate(() => {
-            window.scrollTo(0, document.body.scrollHeight);
-          });
-          await this.page.waitForTimeout(2000); // Wait 2 seconds
-          
-          const finalJobCards = await this.page.$$(".card");
-          if (finalJobCards.length === currentJobCount) {
-            console.log(`✅ Infinite scroll complete. No new jobs loaded after extra wait.`);
-            break;
-          }
-          currentJobCount = finalJobCards.length;
-        }
-
-        // Scroll to bottom of page
-        await this.page.evaluate(() => {
-          window.scrollTo(0, document.body.scrollHeight);
+      // First, find the container and get its dimensions
+      const containerInfo = await this.page.evaluate(() => {
+        const scrollableContainers = Array.from(document.querySelectorAll('div')).filter(div => {
+          const style = window.getComputedStyle(div);
+          return style.overflow === 'auto' && 
+                 style.position === 'relative' && 
+                 (style.willChange === 'transform' || div.style.willChange === 'transform');
         });
 
-        // Wait for new content to load
+        if (scrollableContainers.length > 0) {
+          const container = scrollableContainers[0];
+          return {
+            found: true,
+            scrollHeight: container.scrollHeight,
+            clientHeight: container.clientHeight,
+            maxScroll: container.scrollHeight - container.clientHeight
+          };
+        }
+        return { 
+          found: false,
+          scrollHeight: 0,
+          clientHeight: 0,
+          maxScroll: 0
+        };
+      });
+
+      if (!containerInfo.found || containerInfo.maxScroll <= 0) {
+        console.log("❌ No virtualized container found or container not scrollable");
+        return;
+      }
+
+      console.log(`📐 Container info: scrollHeight=${containerInfo.scrollHeight}, clientHeight=${containerInfo.clientHeight}`);
+
+      // Calculate incremental scroll positions
+      const scrollIncrement = Math.max(containerInfo.clientHeight / 3, 100); // Scroll 1/3 viewport at a time
+      const totalScrollPositions = Math.ceil(containerInfo.maxScroll / scrollIncrement);
+      
+      console.log(`📜 Will scroll incrementally through ${totalScrollPositions} positions`);
+
+      // Scroll incrementally through the entire list
+      for (let position = 0; position <= containerInfo.maxScroll; position += scrollIncrement) {
+        scrollAttempts++;
+        
+        console.log(`📜 Incremental scroll ${scrollAttempts}: position ${position}/${containerInfo.maxScroll}`);
+
+        // Scroll to specific position
+        const scrollResult = await this.page.evaluate((targetPosition) => {
+          const scrollableContainers = Array.from(document.querySelectorAll('div')).filter(div => {
+            const style = window.getComputedStyle(div);
+            return style.overflow === 'auto' && 
+                   style.position === 'relative' && 
+                   (style.willChange === 'transform' || div.style.willChange === 'transform');
+          });
+
+          if (scrollableContainers.length > 0) {
+            const container = scrollableContainers[0];
+            const beforeScrollTop = container.scrollTop;
+            
+            // Scroll to the target position
+            container.scrollTop = targetPosition;
+            
+            // Dispatch scroll event to trigger virtualization
+            container.dispatchEvent(new Event('scroll', { bubbles: true }));
+            
+            const afterScrollTop = container.scrollTop;
+            
+            return {
+              success: true,
+              beforeScrollTop,
+              afterScrollTop,
+              targetPosition,
+              actualPosition: container.scrollTop
+            };
+          }
+          return { success: false };
+        }, position);
+
+        console.log(`📊 Scroll result: ${scrollResult.beforeScrollTop} → ${scrollResult.afterScrollTop} (target: ${position})`);
+
+        // Wait for virtualized content to render
         await this.page.waitForTimeout(scrollDelay);
 
-        // Look for loading indicators or "Load More" buttons
-        try {
-          // Check for loading spinner or "Load More" button
-          const loadMoreButton = await this.page.$('button:has-text("Load More"), button:has-text("Show More"), .load-more, [class*="load-more"]');
-          if (loadMoreButton) {
-            console.log("🔘 Found 'Load More' button, clicking it...");
-            await loadMoreButton.click();
-            await this.page.waitForTimeout(2000); // Wait for new content
-          }
+        // Collect currently visible jobs to track unique ones
+        const currentJobs = await this.page.evaluate(() => {
+          const cards = Array.from(document.querySelectorAll('.card'));
+          return cards.map((card, index) => {
+            const titleElement = card.querySelector('a[href*="job"], h1, h2, h3, h4, h5, h6, .job-title, [class*="title"]');
+            const title = titleElement ? titleElement.textContent?.trim() : '';
+            const linkElement = card.querySelector('a[href*="job"]');
+            const url = linkElement ? linkElement.getAttribute('href') : '';
+            return {
+              title,
+              url,
+              uniqueId: `${title}_${url}`.replace(/\s+/g, '_')
+            };
+          }).filter(job => job.title && job.title.length > 0);
+        });
 
-          // Check for loading indicator
-          const loadingIndicator = await this.page.$('.loading, [class*="loading"], .spinner, [class*="spinner"]');
-          if (loadingIndicator) {
-            console.log("⏳ Waiting for loading to complete...");
-            await this.page.waitForSelector('.loading, [class*="loading"], .spinner, [class*="spinner"]', { 
-              state: 'detached',
-              timeout: 10000 
-            });
-          }
-        } catch (error) {
-          // No loading indicators found, continue with normal scroll
+        // Add to our set of all jobs
+        currentJobs.forEach(job => allJobsSet.add(job.uniqueId));
+        
+        const newCurrentJobCount = currentJobs.length;
+        console.log(`📋 Currently visible: ${newCurrentJobCount} jobs, Total unique collected: ${allJobsSet.size}`);
+
+        // Progress update
+        if (allJobsSet.size > previousJobCount) {
+          console.log(`📈 Progress: +${allJobsSet.size - previousJobCount} new unique jobs (total: ${allJobsSet.size})`);
+          previousJobCount = allJobsSet.size;
+          noChangeAttempts = 0; // Reset since we found new jobs
+        } else {
+          noChangeAttempts++;
         }
 
-        previousJobCount = currentJobCount;
-        scrollAttempts++;
+        // Break if we haven't found new jobs for a while
+        if (noChangeAttempts >= 10) {
+          console.log("🛑 No new unique jobs found for 10 attempts, ending incremental scroll");
+          break;
+        }
 
-        // Extra check: if we've loaded a lot of jobs, maybe we're done
-        if (currentJobCount >= 300) {
-          console.log(`🎯 Loaded ${currentJobCount} jobs, that seems like all of them. Stopping scroll.`);
+        // Safety check
+        if (scrollAttempts >= maxScrollAttempts) {
+          console.log("🛑 Reached maximum scroll attempts");
           break;
         }
       }
 
-      console.log(`🏁 Infinite scroll completed after ${scrollAttempts} attempts. Total jobs loaded: ${currentJobCount}`);
+      console.log(`🏁 Incremental scroll completed after ${scrollAttempts} attempts`);
+      console.log(`📊 Total unique jobs discovered: ${allJobsSet.size}`);
 
-      // Final scroll to top to ensure all elements are properly rendered
+      // Final scroll to top to see all jobs and then scroll through once more to collect everything
       await this.page.evaluate(() => {
-        window.scrollTo(0, 0);
+        const container = Array.from(document.querySelectorAll('div')).find(div => {
+          const style = window.getComputedStyle(div);
+          return style.overflow === 'auto' && style.position === 'relative';
+        });
+        if (container) {
+          container.scrollTop = 0;
+        }
       });
+      
       await this.page.waitForTimeout(1000);
 
     } catch (error) {
-      console.error("❌ Error during infinite scroll:", error);
+      console.error("❌ Error during incremental scroll:", error);
       // Continue anyway with whatever jobs we have loaded
     }
   }
