@@ -623,6 +623,67 @@ export class SupabaseService {
     }
   }
 
+  // Get jobs ready for application (not_applied status with specific technologies)
+  async getJobsForApplication(): Promise<JobApplication[]> {
+    try {
+      // Define the technologies we want to apply for
+      const targetTechnologies = [
+        "Node.js",
+        "React",
+        "TypeScript",
+        "JavaScript",
+        "Python",
+        "Angular",
+        "Vue.js",
+      ];
+
+      let query = this.supabase
+        .from("jobs_with_technologies")
+        .select("*")
+        .eq("application_status", "not_applied")
+        .order("created_at", { ascending: false });
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.error("Error fetching jobs for application:", error);
+        return [];
+      }
+
+      if (!data) {
+        return [];
+      }
+
+      // Filter jobs that have at least one of our target technologies
+      const filteredJobs = data.filter((job: any) => {
+        if (
+          !job.technologies ||
+          !Array.isArray(job.technologies) ||
+          job.technologies[0] === null
+        ) {
+          return false;
+        }
+
+        // Check if any of the job's technologies match our target technologies
+        return job.technologies.some((tech: string) =>
+          targetTechnologies.some(
+            (targetTech) =>
+              tech.toLowerCase().includes(targetTech.toLowerCase()) ||
+              targetTech.toLowerCase().includes(tech.toLowerCase())
+          )
+        );
+      });
+
+      console.log(
+        `📋 Found ${filteredJobs.length} jobs ready for application out of ${data.length} total not_applied jobs`
+      );
+      return filteredJobs as JobApplication[];
+    } catch (error) {
+      console.error("Error in getJobsForApplication:", error);
+      return [];
+    }
+  }
+
   // Get job statistics
   async getJobStats(): Promise<{
     total: number;

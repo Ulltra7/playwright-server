@@ -21,6 +21,10 @@ router.patch(
   JobScraperController.updateApplicationStatus
 );
 
+// Job application endpoints
+router.get("/jobs/for-application", JobScraperController.getJobsForApplication);
+router.post("/jobs/apply", JobScraperController.applyToJobs);
+
 // Reference data endpoints
 router.get("/jobs/sources", JobScraperController.getJobSources);
 router.get("/jobs/technologies", JobScraperController.getTechnologies);
