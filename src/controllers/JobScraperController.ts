@@ -6,9 +6,12 @@ import {
   JobApplicationService,
   JobApplicationResult,
 } from "../services/JobApplicationService";
+import { ArbeitnowScraper } from "../services/ArbeitnowScraper";
+import { CronJobService } from "../services/CronJobService";
 
 export class JobScraperController {
   private static supabaseService = new SupabaseService();
+  private static cronJobService = new CronJobService();
 
   static async scrapeSwissDevJobs(req: Request, res: Response): Promise<void> {
     try {
@@ -411,6 +414,127 @@ export class JobScraperController {
       res.status(500).json({
         status: "error",
         message: "Failed to fetch jobs for application",
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Arbeitnow scraping methods
+  static async scrapeAndSaveArbeitnowJobs(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    try {
+      console.log("🕷️ Starting Arbeitnow jobs scraping and saving process...");
+
+      const scraper = new ArbeitnowScraper();
+      const scrapedResult = await scraper.scrapeWithoutBrowser();
+
+      if (!scrapedResult.jobs || scrapedResult.jobs.length === 0) {
+        res.status(200).json({
+          status: "success",
+          message: "Scraping completed, but no jobs found",
+          data: { inserted: 0, skipped: 0, errors: [] },
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // Bulk insert to database
+      const result = await JobScraperController.supabaseService.bulkInsertJobs(
+        scrapedResult.jobs
+      );
+
+      console.log(
+        `✅ Database operation completed: ${result.inserted} inserted, ${result.skipped} skipped`
+      );
+
+      const response: ScraperResponse = {
+        status: "success",
+        message: `Arbeitnow scraping and saving completed: ${result.inserted} new jobs saved, ${result.skipped} duplicates skipped`,
+        data: result,
+        timestamp: new Date().toISOString(),
+      };
+
+      res.status(200).json(response);
+    } catch (error) {
+      console.error("❌ Error scraping and saving Arbeitnow jobs:", error);
+
+      const errorResponse: ScraperResponse = {
+        status: "error",
+        message: "Failed to scrape and save Arbeitnow jobs",
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      };
+
+      res.status(500).json(errorResponse);
+    }
+  }
+
+  // Manual trigger for Arbeitnow cron job
+  static async runArbeitnowCronJob(req: Request, res: Response): Promise<void> {
+    try {
+      console.log("🕘 Manually triggering Arbeitnow cron job...");
+      
+      await JobScraperController.cronJobService.runArbeitnowScraping();
+
+      res.status(200).json({
+        status: "success",
+        message: "Arbeitnow cron job executed successfully",
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Error running Arbeitnow cron job:", error);
+
+      res.status(500).json({
+        status: "error",
+        message: "Failed to run Arbeitnow cron job",
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Start the daily cron job
+  static async startDailyCronJob(req: Request, res: Response): Promise<void> {
+    try {
+      JobScraperController.cronJobService.startDailyJobScraping();
+
+      res.status(200).json({
+        status: "success",
+        message: "Daily Arbeitnow cron job started (scheduled for 9:00 AM daily)",
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Error starting daily cron job:", error);
+
+      res.status(500).json({
+        status: "error",
+        message: "Failed to start daily cron job",
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Get cron job status
+  static async getCronJobStatus(req: Request, res: Response): Promise<void> {
+    try {
+      const status = JobScraperController.cronJobService.getJobsStatus();
+
+      res.status(200).json({
+        status: "success",
+        message: "Cron job status retrieved",
+        data: status,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Error getting cron job status:", error);
+
+      res.status(500).json({
+        status: "error",
+        message: "Failed to get cron job status",
         error: error instanceof Error ? error.message : "Unknown error",
         timestamp: new Date().toISOString(),
       });

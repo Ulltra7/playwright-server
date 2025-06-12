@@ -13,6 +13,17 @@ router.post(
   JobScraperController.scrapeAndSaveSwissDevJobs
 );
 
+// Arbeitnow scraping endpoints
+router.post(
+  "/scrape/arbeitnow/save",
+  JobScraperController.scrapeAndSaveArbeitnowJobs
+);
+
+// Cron job endpoints
+router.post("/cron/arbeitnow/run", JobScraperController.runArbeitnowCronJob);
+router.post("/cron/start", JobScraperController.startDailyCronJob);
+router.get("/cron/status", JobScraperController.getCronJobStatus);
+
 // Job management endpoints
 router.get("/jobs", JobScraperController.getJobs);
 router.get("/jobs/stats", JobScraperController.getJobStats);
