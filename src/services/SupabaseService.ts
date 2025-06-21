@@ -1437,4 +1437,24 @@ export class SupabaseService {
       return false;
     }
   }
+
+  // Update a job by ID
+  async updateJob(jobId: string, updateData: Partial<JobApplication>): Promise<boolean> {
+    try {
+      const { error } = await this.supabase
+        .from(this.tableName)
+        .update(updateData)
+        .eq("id", jobId);
+
+      if (error) {
+        console.error("Error updating job:", error);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Error in updateJob:", error);
+      return false;
+    }
+  }
 }

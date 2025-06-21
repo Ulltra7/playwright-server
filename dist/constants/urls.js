@@ -14,7 +14,7 @@ exports.JOB_SITES = {
     },
 };
 exports.BROWSER_CONFIG = {
-    HEADLESS: false,
+    HEADLESS: true,
     ARGS: ["--no-sandbox", "--disable-setuid-sandbox"],
     TIMEOUT: 30000,
     WAIT_FOR_LOAD: 2000,

@@ -10,7 +10,10 @@
     "filter-jobs": "ts-node-dev src/scripts/filterNonITJobs.ts",
     "get-job-titles": "ts-node-dev src/scripts/getAllJobTitles.ts",
     "remove-finance-jobs": "ts-node-dev src/scripts/removeFinanceJobs.ts",
-    "test-non-it-removal": "ts-node-dev src/scripts/testNonITRemoval.ts"
+    "test-non-it-removal": "ts-node-dev src/scripts/testNonITRemoval.ts",
+    "scrape-swissdevjobs": "ts-node-dev src/scripts/scrapeSwissDevJobs.ts",
+    "debug-swissdevjobs": "ts-node-dev src/scripts/debugSwissDevJobs.ts",
+    "update-swissdevjobs": "ts-node-dev src/scripts/updateSwissDevJobsCompanyLocation.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.50.0",

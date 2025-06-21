@@ -6,6 +6,8 @@ const SupabaseService_1 = require("../services/SupabaseService");
 const JobApplicationService_1 = require("../services/JobApplicationService");
 const ArbeitnowScraper_1 = require("../services/ArbeitnowScraper");
 const CronJobService_1 = require("../services/CronJobService");
+const JobFilterService_1 = require("../services/JobFilterService");
+const roleFilters_1 = require("../config/roleFilters");
 class JobScraperController {
     static async scrapeSwissDevJobs(req, res) {
         try {
@@ -95,7 +97,7 @@ class JobScraperController {
     // Get all jobs from database
     static async getJobs(req, res) {
         try {
-            const { status, company, source, priority } = req.query;
+            const { status, company, source, priority, technology, search, page, limit, sortBy, sortOrder, role } = req.query;
             const filters = {};
             if (status)
                 filters.status = status;
@@ -105,11 +107,42 @@ class JobScraperController {
                 filters.source = source;
             if (priority)
                 filters.priority = priority;
-            const jobs = await JobScraperController.supabaseService.getJobs(filters);
+            if (technology)
+                filters.technology = technology;
+            if (search)
+                filters.search = search;
+            if (role)
+                filters.role = role;
+            // Parse pagination parameters
+            if (page)
+                filters.page = parseInt(page, 10);
+            if (limit)
+                filters.limit = parseInt(limit, 10);
+            // Validate pagination parameters
+            if (filters.page && (isNaN(filters.page) || filters.page < 1)) {
+                filters.page = 1;
+            }
+            if (filters.limit && (isNaN(filters.limit) || filters.limit < 1 || filters.limit > 100)) {
+                filters.limit = 20;
+            }
+            // Sorting parameters
+            if (sortBy)
+                filters.sortBy = sortBy;
+            if (sortOrder && ['asc', 'desc'].includes(sortOrder)) {
+                filters.sortOrder = sortOrder;
+            }
+            const result = await JobScraperController.supabaseService.getJobs(filters);
             res.status(200).json({
                 status: "success",
-                message: `Retrieved ${jobs.length} jobs`,
-                data: jobs,
+                message: `Retrieved ${result.data.length} jobs`,
+                data: result.data,
+                pagination: {
+                    total: result.total,
+                    page: result.page,
+                    limit: result.limit,
+                    totalPages: result.totalPages,
+                    hasMore: result.page < result.totalPages
+                },
                 timestamp: new Date().toISOString(),
             });
         }
@@ -227,6 +260,26 @@ class JobScraperController {
             res.status(500).json({
                 status: "error",
                 message: "Failed to fetch technologies",
+                error: error instanceof Error ? error.message : "Unknown error",
+                timestamp: new Date().toISOString(),
+            });
+        }
+    }
+    // Get role filters for frontend
+    static async getRoleFilters(req, res) {
+        try {
+            res.status(200).json({
+                status: "success",
+                message: "Role filters retrieved",
+                data: roleFilters_1.MAIN_ROLE_FILTERS,
+                timestamp: new Date().toISOString(),
+            });
+        }
+        catch (error) {
+            console.error("❌ Error fetching role filters:", error);
+            res.status(500).json({
+                status: "error",
+                message: "Failed to fetch role filters",
                 error: error instanceof Error ? error.message : "Unknown error",
                 timestamp: new Date().toISOString(),
             });
@@ -407,6 +460,27 @@ class JobScraperController {
             });
         }
     }
+    // Manual trigger for all scrapers
+    static async runAllScrapersCronJob(req, res) {
+        try {
+            console.log("🕘 Manually triggering all scrapers...");
+            await JobScraperController.cronJobService.runAllScrapers();
+            res.status(200).json({
+                status: "success",
+                message: "All scrapers executed successfully",
+                timestamp: new Date().toISOString(),
+            });
+        }
+        catch (error) {
+            console.error("❌ Error running all scrapers:", error);
+            res.status(500).json({
+                status: "error",
+                message: "Failed to run all scrapers",
+                error: error instanceof Error ? error.message : "Unknown error",
+                timestamp: new Date().toISOString(),
+            });
+        }
+    }
     // Start the daily cron job
     static async startDailyCronJob(req, res) {
         try {
@@ -448,7 +522,81 @@ class JobScraperController {
             });
         }
     }
+    // Job filtering methods removed - filtering happens automatically via cron job
+    // Analyze job categories and distribution
+    static async analyzeJobCategories(req, res) {
+        try {
+            console.log("📊 Analyzing job categories...");
+            const jobFilterService = new JobFilterService_1.JobFilterService();
+            const analysis = await jobFilterService.analyzeJobDistribution();
+            res.status(200).json({
+                status: "success",
+                message: "Job category analysis completed",
+                data: analysis,
+                timestamp: new Date().toISOString(),
+            });
+        }
+        catch (error) {
+            console.error("❌ Error analyzing job categories:", error);
+            res.status(500).json({
+                status: "error",
+                message: "Failed to analyze job categories",
+                error: error instanceof Error ? error.message : "Unknown error",
+                timestamp: new Date().toISOString(),
+            });
+        }
+    }
+    // Analyze technologies in database
+    static async analyzeTechnologies(req, res) {
+        try {
+            console.log("📊 Analyzing technologies in database...");
+            // Get all technologies
+            const technologies = await JobScraperController.supabaseService.getTechnologies();
+            // Get all jobs with their technologies
+            const allJobsResult = await JobScraperController.supabaseService.getJobs({
+                limit: 10000
+            });
+            // Count technology usage
+            const techUsageCount = {};
+            allJobsResult.data.forEach(job => {
+                if (job.technologies && Array.isArray(job.technologies)) {
+                    job.technologies.forEach((tech) => {
+                        const techName = typeof tech === 'string' ? tech : tech.name;
+                        if (techName) {
+                            techUsageCount[techName] = (techUsageCount[techName] || 0) + 1;
+                        }
+                    });
+                }
+            });
+            // Sort technologies by usage
+            const sortedTechUsage = Object.entries(techUsageCount)
+                .sort(([, a], [, b]) => b - a)
+                .map(([tech, count]) => ({ technology: tech, count }));
+            res.status(200).json({
+                status: "success",
+                message: "Technology analysis completed",
+                data: {
+                    totalTechnologies: technologies.length,
+                    totalJobs: allJobsResult.total,
+                    technologies: technologies,
+                    topUsedTechnologies: sortedTechUsage.slice(0, 50),
+                    allTechnologyUsage: sortedTechUsage
+                },
+                timestamp: new Date().toISOString(),
+            });
+        }
+        catch (error) {
+            console.error("❌ Error analyzing technologies:", error);
+            res.status(500).json({
+                status: "error",
+                message: "Failed to analyze technologies",
+                error: error instanceof Error ? error.message : "Unknown error",
+                timestamp: new Date().toISOString(),
+            });
+        }
+    }
 }
 exports.JobScraperController = JobScraperController;
 JobScraperController.supabaseService = new SupabaseService_1.SupabaseService();
 JobScraperController.cronJobService = new CronJobService_1.CronJobService();
+JobScraperController.jobFilterService = new JobFilterService_1.JobFilterService();

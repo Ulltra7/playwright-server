@@ -183,6 +183,7 @@ export class SwissDevJobsScraper extends JobScraper {
     for (let i = 0; i < jobElements.length; i++) {
       try {
         const element = jobElements[i];
+        
 
         // Extract job title
         const titleElement = await element.$(
@@ -196,60 +197,39 @@ export class SwissDevJobsScraper extends JobScraper {
           continue; // Skip jobs without titles
         }
 
-        // Extract company and location using semantic attributes first
-        let company = await this.extractCompanyBySemantic(element);
-        let location = await this.extractLocationBySemantic(element);
+        // Extract company and location using exact aria-label attributes
+        let company = "";
+        let location = "";
 
-        // Fallback to parsing combined company+location links
-        if (!company) {
-          const allLinks = await element.$$("a");
+        // Get company from span with aria-label="hiring organization"
+        const companySpan = await element.$('span[aria-label="hiring organization"]');
+        if (companySpan) {
+          company = (await companySpan.textContent())?.trim() || "";
+        }
 
-          for (const link of allLinks) {
-            const linkText = (await link.textContent())?.trim() || "";
-            const linkHref = (await link.getAttribute("href")) || "";
-
-            if (
-              linkHref.includes("/jobs/") &&
-              !linkHref.includes("/jobs/TypeScript") &&
-              !linkHref.includes("/jobs/JavaScript") &&
-              !linkHref.includes("/jobs/Frontend") &&
-              !linkHref.includes("/jobs/Angular") &&
-              !linkHref.includes("/jobs/Backend") &&
-              !linkHref.includes("/jobs/API") &&
-              !linkHref.includes("/jobs/Cloud") &&
-              !linkHref.includes("/jobs/Azure") &&
-              !linkHref.includes("/jobs/C#") &&
-              !linkHref.includes("/jobs/CI/CD") &&
-              !linkHref.includes("/jobs/Cypress") &&
-              !linkHref.includes("/jobs/ROS") &&
-              linkText.length > 10 &&
-              (linkText.includes("AG") ||
-                linkText.includes("GmbH") ||
-                linkText.includes("SA") ||
-                linkText.includes("strasse") ||
-                linkText.includes("gasse") ||
-                linkText.includes(","))
-            ) {
-              const companyPatterns = [
-                /^(.+?\s(?:AG|GmbH|SA|Ltd|Inc|Corp|LLC|AB|Oy))\s*(.+)$/i,
-                /^(.+?)\s+([A-Z][a-z]+(?:strasse|gasse|weg|platz|ring)\s*\d+.*)$/i,
-              ];
-
-              let extracted = false;
-              for (const pattern of companyPatterns) {
-                const match = linkText.match(pattern);
-                if (match) {
-                  company = match[1].trim();
-                  location = match[2].trim();
-                  extracted = true;
-                  break;
-                }
-              }
-
-              if (extracted) break;
-            }
+        // Get location from div with aria-label="hiring organization address"
+        const locationDiv = await element.$('div[aria-label="hiring organization address"]');
+        if (locationDiv) {
+          const fullAddress = (await locationDiv.textContent())?.trim() || "";
+          // Extract city from full address (usually after last comma)
+          if (fullAddress.includes(',')) {
+            const parts = fullAddress.split(',');
+            location = parts[parts.length - 1].trim();
+          } else {
+            location = fullAddress;
           }
         }
+
+        // Get salary from div with aria-label="annual salary range"
+        let salary = "";
+        const salaryDiv = await element.$('div[aria-label="annual salary range"]');
+        if (salaryDiv) {
+          salary = (await salaryDiv.textContent())?.trim() || "";
+        }
+
+        // Final fallback values
+        if (!company) company = "Unknown Company";
+        if (!location) location = "Location not specified";
 
         // Extract job URL
         const linkElement = await element.$('a[href*="job"]');
@@ -257,13 +237,6 @@ export class SwissDevJobsScraper extends JobScraper {
           ? (await linkElement.getAttribute("href")) || ""
           : "";
 
-        // Extract salary if available
-        const salaryElement = await element.$(
-          '[class*="salary"], [class*="wage"], [class*="chf"], [class*="€"], [class*="$"]'
-        );
-        const salary = salaryElement
-          ? (await salaryElement.textContent())?.trim() || ""
-          : "";
 
         // Extract technology badges
         const technologies: string[] = [];

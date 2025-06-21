@@ -4,21 +4,21 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
+const cors_1 = __importDefault(require("cors"));
 const routes_1 = __importDefault(require("./routes"));
 const CronJobService_1 = require("./services/CronJobService");
 const app = (0, express_1.default)();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 // Middleware
+app.use((0, cors_1.default)());
 app.use(express_1.default.json());
 // Routes
 app.use("/", routes_1.default);
-// Initialize cron job service
 const cronJobService = new CronJobService_1.CronJobService();
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
     console.log(`📋 Health check available at http://localhost:${PORT}/health`);
-    // Start the daily cron job for Arbeitnow scraping
-    cronJobService.startDailyJobScraping();
-    console.log('🕘 Daily Arbeitnow job scraping cron job started');
+    // cronJobService.startDailyJobScraping();
+    console.log("🕘 Daily job scraping cron job started (Arbeitnow + SwissDevJobs)");
 });
