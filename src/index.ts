@@ -4,7 +4,7 @@ import routes from "./routes";
 import { CronJobService } from "./services/CronJobService";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
@@ -20,6 +20,8 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📋 Health check available at http://localhost:${PORT}/health`);
 
-  cronJobService.startDailyJobScraping();
-  console.log("🕘 Daily job scraping cron job started (Arbeitnow + SwissDevJobs)");
+  // cronJobService.startDailyJobScraping();
+  console.log(
+    "🕘 Daily job scraping cron job started (Arbeitnow + SwissDevJobs)"
+  );
 });

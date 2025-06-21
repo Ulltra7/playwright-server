@@ -579,20 +579,67 @@ export class SupabaseService {
     }
   }
 
-  // Get all jobs with optional filtering (uses view with technologies)
+  // Get all jobs with optional filtering and pagination (uses view with technologies)
   async getJobs(filters?: {
     status?: JobApplication["application_status"];
     company?: string;
     source?: string;
     priority?: JobApplication["priority"];
     technology?: string;
-  }): Promise<JobApplication[]> {
+    search?: string;
+    page?: number;
+    limit?: number;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+  }): Promise<{
+    data: JobApplication[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
     try {
+      const page = filters?.page || 1;
+      const limit = filters?.limit || 20;
+      const offset = (page - 1) * limit;
+      const sortBy = filters?.sortBy || 'scraped_at';
+      const sortOrder = filters?.sortOrder || 'desc';
+
+      // First, get the total count
+      let countQuery = this.supabase
+        .from("jobs_with_technologies")
+        .select("*", { count: 'exact', head: true });
+
+      // Apply filters to count query
+      if (filters?.status) {
+        countQuery = countQuery.eq("application_status", filters.status);
+      }
+      if (filters?.company) {
+        countQuery = countQuery.ilike("company", `%${filters.company}%`);
+      }
+      if (filters?.source) {
+        countQuery = countQuery.eq("source_name", filters.source);
+      }
+      if (filters?.priority) {
+        countQuery = countQuery.eq("priority", filters.priority);
+      }
+      if (filters?.technology) {
+        countQuery = countQuery.contains("technologies", [filters.technology]);
+      }
+      if (filters?.search) {
+        countQuery = countQuery.or(`job_title.ilike.%${filters.search}%,company.ilike.%${filters.search}%,location.ilike.%${filters.search}%`);
+      }
+
+      const { count } = await countQuery;
+
+      // Now get the actual data
       let query = this.supabase
         .from("jobs_with_technologies")
         .select("*")
-        .order("created_at", { ascending: false });
+        .order(sortBy, { ascending: sortOrder === 'asc' })
+        .range(offset, offset + limit - 1);
 
+      // Apply same filters to data query
       if (filters?.status) {
         query = query.eq("application_status", filters.status);
       }
@@ -608,18 +655,42 @@ export class SupabaseService {
       if (filters?.technology) {
         query = query.contains("technologies", [filters.technology]);
       }
+      if (filters?.search) {
+        query = query.or(`job_title.ilike.%${filters.search}%,company.ilike.%${filters.search}%,location.ilike.%${filters.search}%`);
+      }
 
       const { data, error } = await query;
 
       if (error) {
         console.error("Error fetching jobs:", error);
-        return [];
+        return {
+          data: [],
+          total: 0,
+          page,
+          limit,
+          totalPages: 0
+        };
       }
 
-      return data as JobApplication[];
+      const total = count || 0;
+      const totalPages = Math.ceil(total / limit);
+
+      return {
+        data: data as JobApplication[],
+        total,
+        page,
+        limit,
+        totalPages
+      };
     } catch (error) {
       console.error("Error in getJobs:", error);
-      return [];
+      return {
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 20,
+        totalPages: 0
+      };
     }
   }
 

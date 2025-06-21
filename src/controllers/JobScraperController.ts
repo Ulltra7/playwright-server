@@ -122,20 +122,58 @@ export class JobScraperController {
   // Get all jobs from database
   static async getJobs(req: Request, res: Response): Promise<void> {
     try {
-      const { status, company, source, priority } = req.query;
+      const { 
+        status, 
+        company, 
+        source, 
+        priority, 
+        technology,
+        search,
+        page,
+        limit,
+        sortBy,
+        sortOrder
+      } = req.query;
 
       const filters: any = {};
       if (status) filters.status = status as string;
       if (company) filters.company = company as string;
       if (source) filters.source = source as string;
       if (priority) filters.priority = priority as string;
+      if (technology) filters.technology = technology as string;
+      if (search) filters.search = search as string;
+      
+      // Parse pagination parameters
+      if (page) filters.page = parseInt(page as string, 10);
+      if (limit) filters.limit = parseInt(limit as string, 10);
+      
+      // Validate pagination parameters
+      if (filters.page && (isNaN(filters.page) || filters.page < 1)) {
+        filters.page = 1;
+      }
+      if (filters.limit && (isNaN(filters.limit) || filters.limit < 1 || filters.limit > 100)) {
+        filters.limit = 20;
+      }
+      
+      // Sorting parameters
+      if (sortBy) filters.sortBy = sortBy as string;
+      if (sortOrder && ['asc', 'desc'].includes(sortOrder as string)) {
+        filters.sortOrder = sortOrder as 'asc' | 'desc';
+      }
 
-      const jobs = await JobScraperController.supabaseService.getJobs(filters);
+      const result = await JobScraperController.supabaseService.getJobs(filters);
 
       res.status(200).json({
         status: "success",
-        message: `Retrieved ${jobs.length} jobs`,
-        data: jobs,
+        message: `Retrieved ${result.data.length} jobs`,
+        data: result.data,
+        pagination: {
+          total: result.total,
+          page: result.page,
+          limit: result.limit,
+          totalPages: result.totalPages,
+          hasMore: result.page < result.totalPages
+        },
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
