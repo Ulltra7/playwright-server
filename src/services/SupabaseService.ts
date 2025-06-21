@@ -164,10 +164,10 @@ export class SupabaseService {
       }
 
       console.log(`✨ Created new technology: ${normalizedName}`);
-      
+
       // Link the new technology to appropriate job roles
       await this.linkTechnologyToJobRoles(newTech.id, normalizedName);
-      
+
       return newTech.id;
     } catch (error) {
       console.error("Error in getOrCreateTechnology:", error);
@@ -370,12 +370,17 @@ export class SupabaseService {
   }
 
   // Link technology to job roles
-  private async linkTechnologyToJobRoles(technologyId: string, technologyName: string): Promise<void> {
+  private async linkTechnologyToJobRoles(
+    technologyId: string,
+    technologyName: string
+  ): Promise<void> {
     try {
       const roles = this.determineJobRoles(technologyName);
-      
+
       if (roles.length === 0) {
-        console.log(`⚠️ No job roles determined for technology: ${technologyName}`);
+        console.log(
+          `⚠️ No job roles determined for technology: ${technologyName}`
+        );
         return;
       }
 
@@ -387,12 +392,12 @@ export class SupabaseService {
           .select("id")
           .eq("name", roleName)
           .single();
-        
+
         if (roleData) {
           roleInserts.push({
             technology_id: technologyId,
             job_role_id: roleData.id,
-            relevance_score: relevanceScore
+            relevance_score: relevanceScore,
           });
         }
       }
@@ -401,11 +406,13 @@ export class SupabaseService {
         const { error } = await this.supabase
           .from("technology_job_roles")
           .insert(roleInserts);
-        
+
         if (error) {
           console.error("Error linking technology to roles:", error);
         } else {
-          console.log(`🔗 Linked ${technologyName} to ${roleInserts.length} job roles`);
+          console.log(
+            `🔗 Linked ${technologyName} to ${roleInserts.length} job roles`
+          );
         }
       }
     } catch (error) {
@@ -414,136 +421,314 @@ export class SupabaseService {
   }
 
   // Determine job roles for a technology
-  private determineJobRoles(name: string): Array<{ roleName: string; relevanceScore: number }> {
+  private determineJobRoles(
+    name: string
+  ): Array<{ roleName: string; relevanceScore: number }> {
     const lowerName = name.toLowerCase();
     const roles: Array<{ roleName: string; relevanceScore: number }> = [];
 
     const roleMapping: Record<string, { keywords: string[]; score: number }> = {
       frontend_developer: {
         keywords: [
-          'react', 'angular', 'vue', 'svelte', 'jquery', 'html', 'css', 'sass', 'less',
-          'bootstrap', 'tailwind', 'material-ui', 'webpack', 'vite', 'babel', 'next.js',
-          'nuxt', 'gatsby', 'emotion', 'styled-components', 'redux', 'mobx', 'vuex'
+          "react",
+          "angular",
+          "vue",
+          "svelte",
+          "jquery",
+          "html",
+          "css",
+          "sass",
+          "less",
+          "bootstrap",
+          "tailwind",
+          "material-ui",
+          "webpack",
+          "vite",
+          "babel",
+          "next.js",
+          "nuxt",
+          "gatsby",
+          "emotion",
+          "styled-components",
+          "redux",
+          "mobx",
+          "vuex",
         ],
-        score: 100
+        score: 100,
       },
       backend_developer: {
         keywords: [
-          'node.js', 'express', 'django', 'flask', 'fastapi', 'laravel', 'spring',
-          '.net', 'asp.net', 'rails', 'golang', 'rust', 'php', 'java', 'c#', 'python',
-          'ruby', 'nest.js', 'koa', 'hapi', 'sinatra', 'gin', 'echo', 'fiber'
+          "node.js",
+          "express",
+          "django",
+          "flask",
+          "fastapi",
+          "laravel",
+          "spring",
+          ".net",
+          "asp.net",
+          "rails",
+          "golang",
+          "rust",
+          "php",
+          "java",
+          "c#",
+          "python",
+          "ruby",
+          "nest.js",
+          "koa",
+          "hapi",
+          "sinatra",
+          "gin",
+          "echo",
+          "fiber",
         ],
-        score: 100
+        score: 100,
       },
       mobile_developer: {
         keywords: [
-          'react native', 'flutter', 'swift', 'kotlin', 'ionic', 'xamarin',
-          'android', 'ios', 'objective-c', 'swiftui', 'jetpack compose'
+          "react native",
+          "flutter",
+          "swift",
+          "kotlin",
+          "ionic",
+          "xamarin",
+          "android",
+          "ios",
+          "objective-c",
+          "swiftui",
+          "jetpack compose",
         ],
-        score: 100
+        score: 100,
       },
       devops_engineer: {
         keywords: [
-          'docker', 'kubernetes', 'terraform', 'ansible', 'jenkins', 'gitlab',
-          'github actions', 'circleci', 'helm', 'prometheus', 'grafana', 'elk',
-          'nginx', 'apache', 'travis', 'bamboo', 'puppet', 'chef', 'vault'
+          "docker",
+          "kubernetes",
+          "terraform",
+          "ansible",
+          "jenkins",
+          "gitlab",
+          "github actions",
+          "circleci",
+          "helm",
+          "prometheus",
+          "grafana",
+          "elk",
+          "nginx",
+          "apache",
+          "travis",
+          "bamboo",
+          "puppet",
+          "chef",
+          "vault",
         ],
-        score: 100
+        score: 100,
       },
       cloud_architect: {
         keywords: [
-          'aws', 'azure', 'google cloud', 'gcp', 'cloudformation', 'serverless',
-          'lambda', 'ec2', 's3', 'cloudfront', 'api gateway', 'cloud functions'
+          "aws",
+          "azure",
+          "google cloud",
+          "gcp",
+          "cloudformation",
+          "serverless",
+          "lambda",
+          "ec2",
+          "s3",
+          "cloudfront",
+          "api gateway",
+          "cloud functions",
         ],
-        score: 100
+        score: 100,
       },
       data_scientist: {
         keywords: [
-          'tensorflow', 'pytorch', 'scikit-learn', 'keras', 'pandas', 'numpy',
-          'jupyter', 'r', 'sas', 'matlab', 'scipy', 'statsmodels', 'seaborn',
-          'matplotlib', 'plotly', 'nltk', 'spacy', 'opencv'
+          "tensorflow",
+          "pytorch",
+          "scikit-learn",
+          "keras",
+          "pandas",
+          "numpy",
+          "jupyter",
+          "r",
+          "sas",
+          "matlab",
+          "scipy",
+          "statsmodels",
+          "seaborn",
+          "matplotlib",
+          "plotly",
+          "nltk",
+          "spacy",
+          "opencv",
         ],
-        score: 100
+        score: 100,
       },
       data_engineer: {
         keywords: [
-          'spark', 'hadoop', 'airflow', 'kafka', 'flink', 'beam', 'dbt',
-          'snowflake', 'redshift', 'bigquery', 'databricks', 'presto', 'hive'
+          "spark",
+          "hadoop",
+          "airflow",
+          "kafka",
+          "flink",
+          "beam",
+          "dbt",
+          "snowflake",
+          "redshift",
+          "bigquery",
+          "databricks",
+          "presto",
+          "hive",
         ],
-        score: 100
+        score: 100,
       },
       database_administrator: {
         keywords: [
-          'postgresql', 'mysql', 'oracle', 'sql server', 'mariadb', 'db2',
-          'sybase', 'backup', 'replication', 'performance tuning'
+          "postgresql",
+          "mysql",
+          "oracle",
+          "sql server",
+          "mariadb",
+          "db2",
+          "sybase",
+          "backup",
+          "replication",
+          "performance tuning",
         ],
-        score: 90
+        score: 90,
       },
       qa_engineer: {
         keywords: [
-          'jest', 'cypress', 'selenium', 'playwright', 'mocha', 'jasmine',
-          'junit', 'testng', 'postman', 'jmeter', 'loadrunner', 'appium',
-          'cucumber', 'robot framework', 'pytest', 'rspec'
+          "jest",
+          "cypress",
+          "selenium",
+          "playwright",
+          "mocha",
+          "jasmine",
+          "junit",
+          "testng",
+          "postman",
+          "jmeter",
+          "loadrunner",
+          "appium",
+          "cucumber",
+          "robot framework",
+          "pytest",
+          "rspec",
         ],
-        score: 100
+        score: 100,
       },
       security_engineer: {
         keywords: [
-          'owasp', 'burp suite', 'metasploit', 'nessus', 'wireshark',
-          'kali', 'siem', 'splunk', 'crowdstrike', 'okta', 'auth0',
-          'oauth', 'jwt', 'encryption', 'penetration testing'
+          "owasp",
+          "burp suite",
+          "metasploit",
+          "nessus",
+          "wireshark",
+          "kali",
+          "siem",
+          "splunk",
+          "crowdstrike",
+          "okta",
+          "auth0",
+          "oauth",
+          "jwt",
+          "encryption",
+          "penetration testing",
         ],
-        score: 100
+        score: 100,
       },
       ux_ui_designer: {
         keywords: [
-          'figma', 'sketch', 'adobe xd', 'photoshop', 'illustrator',
-          'invision', 'zeplin', 'principle', 'framer', 'after effects',
-          'prototyping', 'wireframing', 'user research'
+          "figma",
+          "sketch",
+          "adobe xd",
+          "photoshop",
+          "illustrator",
+          "invision",
+          "zeplin",
+          "principle",
+          "framer",
+          "after effects",
+          "prototyping",
+          "wireframing",
+          "user research",
         ],
-        score: 100
+        score: 100,
       },
       product_manager: {
         keywords: [
-          'jira', 'confluence', 'productboard', 'amplitude', 'mixpanel',
-          'google analytics', 'a/b testing', 'roadmapping', 'user stories'
+          "jira",
+          "confluence",
+          "productboard",
+          "amplitude",
+          "mixpanel",
+          "google analytics",
+          "a/b testing",
+          "roadmapping",
+          "user stories",
         ],
-        score: 90
+        score: 90,
       },
       ai_ml_engineer: {
         keywords: [
-          'machine learning', 'deep learning', 'neural network', 'nlp',
-          'computer vision', 'reinforcement learning', 'gan', 'transformer',
-          'bert', 'gpt', 'llm', 'hugging face', 'mlflow', 'kubeflow'
+          "machine learning",
+          "deep learning",
+          "neural network",
+          "nlp",
+          "computer vision",
+          "reinforcement learning",
+          "gan",
+          "transformer",
+          "bert",
+          "gpt",
+          "llm",
+          "hugging face",
+          "mlflow",
+          "kubeflow",
         ],
-        score: 100
-      }
+        score: 100,
+      },
     };
 
     // Check each role's technologies
     for (const [roleName, config] of Object.entries(roleMapping)) {
-      if (config.keywords.some(keyword => lowerName.includes(keyword) || keyword.includes(lowerName))) {
+      if (
+        config.keywords.some(
+          (keyword) =>
+            lowerName.includes(keyword) || keyword.includes(lowerName)
+        )
+      ) {
         roles.push({ roleName, relevanceScore: config.score });
       }
     }
 
     // Add fullstack_developer if both frontend and backend
-    const hasRole = (name: string) => roles.some(r => r.roleName === name);
-    if (hasRole('frontend_developer') && hasRole('backend_developer')) {
-      if (!hasRole('fullstack_developer')) {
-        roles.push({ roleName: 'fullstack_developer', relevanceScore: 100 });
+    const hasRole = (name: string) => roles.some((r) => r.roleName === name);
+    if (hasRole("frontend_developer") && hasRole("backend_developer")) {
+      if (!hasRole("fullstack_developer")) {
+        roles.push({ roleName: "fullstack_developer", relevanceScore: 100 });
       }
     }
 
     // Generic programming languages can be used by multiple roles
-    const genericTechs = ['git', 'github', 'gitlab', 'agile', 'scrum', 'rest api', 'graphql'];
-    if (genericTechs.some(tech => lowerName.includes(tech))) {
+    const genericTechs = [
+      "git",
+      "github",
+      "gitlab",
+      "agile",
+      "scrum",
+      "rest api",
+      "graphql",
+    ];
+    if (genericTechs.some((tech) => lowerName.includes(tech))) {
       const genericRoles = [
-        { roleName: 'frontend_developer', relevanceScore: 60 },
-        { roleName: 'backend_developer', relevanceScore: 60 },
-        { roleName: 'mobile_developer', relevanceScore: 60 }
+        { roleName: "frontend_developer", relevanceScore: 60 },
+        { roleName: "backend_developer", relevanceScore: 60 },
+        { roleName: "mobile_developer", relevanceScore: 60 },
       ];
-      
+
       for (const genericRole of genericRoles) {
         if (!hasRole(genericRole.roleName)) {
           roles.push(genericRole);
@@ -781,7 +966,7 @@ export class SupabaseService {
     page?: number;
     limit?: number;
     sortBy?: string;
-    sortOrder?: 'asc' | 'desc';
+    sortOrder?: "asc" | "desc";
   }): Promise<{
     data: JobApplication[];
     total: number;
@@ -793,13 +978,13 @@ export class SupabaseService {
       const page = filters?.page || 1;
       const limit = filters?.limit || 20;
       const offset = (page - 1) * limit;
-      const sortBy = filters?.sortBy || 'scraped_at';
-      const sortOrder = filters?.sortOrder || 'desc';
+      const sortBy = filters?.sortBy || "scraped_at";
+      const sortOrder = filters?.sortOrder || "desc";
 
       // First, get the total count
       let countQuery = this.supabase
         .from("jobs_with_technologies")
-        .select("*", { count: 'exact', head: true });
+        .select("*", { count: "exact", head: true });
 
       // Apply filters to count query
       if (filters?.status) {
@@ -818,50 +1003,83 @@ export class SupabaseService {
         countQuery = countQuery.contains("technologies", [filters.technology]);
       }
       if (filters?.search) {
-        countQuery = countQuery.or(`job_title.ilike.%${filters.search}%,company.ilike.%${filters.search}%,location.ilike.%${filters.search}%`);
+        countQuery = countQuery.or(
+          `job_title.ilike.%${filters.search}%,company.ilike.%${filters.search}%,location.ilike.%${filters.search}%`
+        );
       }
-      
+
       // Handle role filtering
       if (filters?.role) {
         // For now, we'll use technology-based filtering until the jobs_with_roles view is created
         // TODO: Switch to using job_roles column once the view is available
-        
+
         // Support multiple roles (comma-separated)
-        const roles = filters.role.split(',').map(r => r.trim());
-        
+        const roles = filters.role.split(",").map((r) => r.trim());
+
         // Map role filter key to actual role names
         const roleMapping: Record<string, string[]> = {
-          'frontend': ['frontend_developer'],
-          'backend': ['backend_developer', 'fullstack_developer'],
-          'mobile': ['mobile_developer'],
-          'data': ['data_scientist', 'data_engineer', 'ai_ml_engineer'],
-          'management': ['it_manager', 'project_manager', 'product_manager', 'scrum_master'],
-          'ux_ui_designer': ['ux_ui_designer']
+          frontend: ["frontend_developer"],
+          backend: ["backend_developer", "fullstack_developer"],
+          mobile: ["mobile_developer"],
+          data: ["data_scientist", "data_engineer", "ai_ml_engineer"],
+          management: [
+            "it_manager",
+            "project_manager",
+            "product_manager",
+            "scrum_master",
+          ],
+          ux_ui_designer: ["ux_ui_designer"],
         };
-        
+
         // For now, filter by job title patterns that indicate the role
         const roleTitlePatterns: Record<string, string[]> = {
-          'frontend': ['frontend', 'front-end', 'ui developer', 'react developer', 'angular developer', 'vue developer'],
-          'backend': ['backend', 'back-end', 'server', 'api developer', 'node developer', 'python developer', 'java developer'],
-          'mobile': ['mobile', 'ios', 'android', 'react native', 'flutter'],
-          'data': ['data scientist', 'data engineer', 'machine learning', 'ml engineer', 'ai engineer', 'data analyst'],
-          'management': ['manager', 'lead', 'head of', 'director', 'scrum master', 'product owner', 'project manager'],
-          'ux_ui_designer': ['designer', 'ux', 'ui', 'user experience', 'user interface', 'design']
+          frontend: [
+            "frontend",
+            "front-end",
+            "ui developer",
+            "react",
+            "angular",
+            "vue",
+          ],
+          backend: [
+            "backend",
+            "back-end",
+            "server",
+            "api developer",
+            "node developer",
+            "python developer",
+            "java developer",
+          ],
+          mobile: ["mobile", "ios", "android", "react native", "flutter"],
+          data: [
+            "data",
+            "analytics",
+            "database",
+            "business intelligence",
+            "bi ",
+            "etl",
+            "machine learning",
+            "ml ",
+            "ai ",
+            "artificial intelligence",
+          ],
+          management: ["manager"],
+          ux_ui_designer: ["designer", "ux"],
         };
-        
+
         // Build title conditions
         const titleConditions: string[] = [];
-        roles.forEach(role => {
+        roles.forEach((role) => {
           const patterns = roleTitlePatterns[role];
           if (patterns) {
-            patterns.forEach(pattern => {
+            patterns.forEach((pattern) => {
               titleConditions.push(`job_title.ilike.%${pattern}%`);
             });
           }
         });
-        
+
         if (titleConditions.length > 0) {
-          countQuery = countQuery.or(titleConditions.join(','));
+          countQuery = countQuery.or(titleConditions.join(","));
         }
       }
 
@@ -871,7 +1089,7 @@ export class SupabaseService {
       let query = this.supabase
         .from("jobs_with_technologies")
         .select("*")
-        .order(sortBy, { ascending: sortOrder === 'asc' })
+        .order(sortBy, { ascending: sortOrder === "asc" })
         .range(offset, offset + limit - 1);
 
       // Apply same filters to data query
@@ -891,37 +1109,65 @@ export class SupabaseService {
         query = query.contains("technologies", [filters.technology]);
       }
       if (filters?.search) {
-        query = query.or(`job_title.ilike.%${filters.search}%,company.ilike.%${filters.search}%,location.ilike.%${filters.search}%`);
+        query = query.or(
+          `job_title.ilike.%${filters.search}%,company.ilike.%${filters.search}%,location.ilike.%${filters.search}%`
+        );
       }
-      
+
       // Handle role filtering (same as count query)
       if (filters?.role) {
         // Support multiple roles (comma-separated)
-        const roles = filters.role.split(',').map(r => r.trim());
-        
+        const roles = filters.role.split(",").map((r) => r.trim());
+
         // For now, filter by job title patterns that indicate the role
         const roleTitlePatterns: Record<string, string[]> = {
-          'frontend': ['frontend', 'front-end', 'ui developer', 'react developer', 'angular developer', 'vue developer'],
-          'backend': ['backend', 'back-end', 'server', 'api developer', 'node developer', 'python developer', 'java developer'],
-          'mobile': ['mobile', 'ios', 'android', 'react native', 'flutter'],
-          'data': ['data scientist', 'data engineer', 'machine learning', 'ml engineer', 'ai engineer', 'data analyst'],
-          'management': ['manager', 'lead', 'head of', 'director', 'scrum master', 'product owner', 'project manager'],
-          'ux_ui_designer': ['designer', 'ux', 'ui', 'user experience', 'user interface', 'design']
+          frontend: [
+            "frontend",
+            "front-end",
+            "ui developer",
+            "react developer",
+            "angular developer",
+            "vue developer",
+          ],
+          backend: [
+            "backend",
+            "back-end",
+            "server",
+            "api developer",
+            "node developer",
+            "python developer",
+            "java developer",
+          ],
+          mobile: ["mobile", "ios", "android", "react native", "flutter"],
+          data: [
+            "data",
+            "analytics",
+            "database",
+            "business intelligence",
+            "bi ",
+            "etl",
+            "machine learning",
+            "ml ",
+            "ai ",
+            "artificial intelligence",
+          ],
+          management: ["manager"],
+          ux_ui_designer: ["designer", "ux"],
         };
-        
+
         // Build title conditions
         const titleConditions: string[] = [];
-        roles.forEach(role => {
+        roles.forEach((role) => {
           const patterns = roleTitlePatterns[role];
           if (patterns) {
-            patterns.forEach(pattern => {
+            patterns.forEach((pattern) => {
               titleConditions.push(`job_title.ilike.%${pattern}%`);
             });
           }
         });
-        
+
         if (titleConditions.length > 0) {
-          query = query.or(titleConditions.join(','));
+          query = query.or(titleConditions.join(","));
         }
       }
 
@@ -934,7 +1180,7 @@ export class SupabaseService {
           total: 0,
           page,
           limit,
-          totalPages: 0
+          totalPages: 0,
         };
       }
 
@@ -946,7 +1192,7 @@ export class SupabaseService {
         total,
         page,
         limit,
-        totalPages
+        totalPages,
       };
     } catch (error) {
       console.error("Error in getJobs:", error);
@@ -955,7 +1201,7 @@ export class SupabaseService {
         total: 0,
         page: 1,
         limit: 20,
-        totalPages: 0
+        totalPages: 0,
       };
     }
   }

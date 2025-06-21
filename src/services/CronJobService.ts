@@ -3,18 +3,21 @@ import { ArbeitnowScraper } from './ArbeitnowScraper';
 import { SwissDevJobsScraper } from '../scrapers/SwissDevJobsScraper';
 import { SupabaseService } from './SupabaseService';
 import { JobFilterService } from './JobFilterService';
+import { NonITJobRemovalService } from './NonITJobRemovalService';
 
 export class CronJobService {
   private supabaseService: SupabaseService;
   private arbeitnowScraper: ArbeitnowScraper;
   private swissDevJobsScraper: SwissDevJobsScraper;
   private jobFilterService: JobFilterService;
+  private nonITJobRemovalService: NonITJobRemovalService;
 
   constructor() {
     this.supabaseService = new SupabaseService();
     this.arbeitnowScraper = new ArbeitnowScraper();
     this.swissDevJobsScraper = new SwissDevJobsScraper();
     this.jobFilterService = new JobFilterService();
+    this.nonITJobRemovalService = new NonITJobRemovalService();
   }
 
   // Schedule daily job scraping at midnight and filtering 30 minutes later
@@ -103,7 +106,14 @@ export class CronJobService {
       
       const startTime = Date.now();
       
-      // Filter out non-IT jobs
+      // First, use the comprehensive NonITJobRemovalService
+      console.log('📋 Running comprehensive non-IT job removal...');
+      const nonITResult = await this.nonITJobRemovalService.removeNonITJobs();
+      
+      console.log(`   • Removed ${nonITResult.removedJobs} jobs using comprehensive keyword list`);
+      
+      // Then run the regular filtering for any remaining categorization
+      console.log('🏷️ Running category-based filtering...');
       const result = await this.jobFilterService.filterNonITJobs();
       
       const endTime = Date.now();
@@ -112,10 +122,17 @@ export class CronJobService {
       console.log(`✅ IT job filtering completed in ${duration}s:`);
       console.log(`   • Total jobs analyzed: ${result.totalJobs}`);
       console.log(`   • IT jobs kept: ${result.itJobs}`);
-      console.log(`   • Non-IT jobs removed: ${result.removedJobs}`);
+      console.log(`   • Non-IT jobs removed (total): ${nonITResult.removedJobs + result.removedJobs}`);
+      
+      if (nonITResult.removedJobsList.length > 0) {
+        console.log('🗑️ Sample of removed jobs (comprehensive filter):');
+        nonITResult.removedJobsList.slice(0, 5).forEach(job => {
+          console.log(`   - ${job.title} at ${job.company} (${job.reason})`);
+        });
+      }
       
       if (result.removedJobsList.length > 0) {
-        console.log('🗑️ Sample of removed jobs:');
+        console.log('🗑️ Sample of removed jobs (category filter):');
         result.removedJobsList.slice(0, 5).forEach(job => {
           console.log(`   - ${job.title} at ${job.company} (${job.reason})`);
         });
@@ -242,6 +259,8 @@ export class CronJobService {
         '  - Arbeitnow (API)',
         '  - SwissDevJobs (Web scraping)',
         'IT job filtering: Scheduled at 00:30 daily (30 minutes after scraping)',
+        '  - Comprehensive non-IT keyword removal',
+        '  - Category-based filtering',
         'Timezone: Europe/Zurich'
       ]
     };

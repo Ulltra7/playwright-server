@@ -8,7 +8,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "filter-jobs": "ts-node-dev src/scripts/filterNonITJobs.ts",
-    "get-job-titles": "ts-node-dev src/scripts/getAllJobTitles.ts"
+    "get-job-titles": "ts-node-dev src/scripts/getAllJobTitles.ts",
+    "remove-finance-jobs": "ts-node-dev src/scripts/removeFinanceJobs.ts",
+    "test-non-it-removal": "ts-node-dev src/scripts/testNonITRemoval.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.50.0",

@@ -125,7 +125,9 @@ export class JobFilterService {
     
     // Finance & Accounting
     'accountant', 'buchhalter', 'tax consultant', 'financial advisory',
-    'finance manager', 'finance', 'controller',
+    'finance manager', 'finance', 'controller', 'controlling',
+    'finanzbuchhaltung', 'buchhaltung', 'finanz', 'rechnungswesen',
+    'accounting', 'treasury', 'wirtschaftsprüfer', 'steuerberater',
     
     // HR & Recruitment
     'hr specialist', 'recruiter', 'talent acquisition', 'personalreferent',
@@ -155,7 +157,7 @@ export class JobFilterService {
         // e.g., "IT Project Manager" or "Software Quality Manager"
         const hasITQualifier = this.IT_JOB_TITLES.some(itTitle => 
           titleLower.includes(itTitle)) || 
-          ['it ', 'software', 'technical', 'tech ', 'digital'].some(qualifier => 
+          ['it ', 'software', 'technical', 'tech ', 'digital', 'entwickl', 'programm'].some(qualifier => 
           titleLower.includes(qualifier));
         
         if (!hasITQualifier) {
