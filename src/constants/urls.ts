@@ -12,7 +12,7 @@ export const JOB_SITES = {
 } as const;
 
 export const BROWSER_CONFIG = {
-  HEADLESS: false,
+  HEADLESS: true,
   ARGS: ["--no-sandbox", "--disable-setuid-sandbox"] as string[],
   TIMEOUT: 30000,
   WAIT_FOR_LOAD: 2000,

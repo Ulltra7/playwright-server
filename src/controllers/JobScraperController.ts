@@ -8,10 +8,13 @@ import {
 } from "../services/JobApplicationService";
 import { ArbeitnowScraper } from "../services/ArbeitnowScraper";
 import { CronJobService } from "../services/CronJobService";
+import { JobFilterService } from "../services/JobFilterService";
+import { MAIN_ROLE_FILTERS } from "../config/roleFilters";
 
 export class JobScraperController {
   private static supabaseService = new SupabaseService();
   private static cronJobService = new CronJobService();
+  private static jobFilterService = new JobFilterService();
 
   static async scrapeSwissDevJobs(req: Request, res: Response): Promise<void> {
     try {
@@ -132,7 +135,8 @@ export class JobScraperController {
         page,
         limit,
         sortBy,
-        sortOrder
+        sortOrder,
+        role
       } = req.query;
 
       const filters: any = {};
@@ -142,6 +146,7 @@ export class JobScraperController {
       if (priority) filters.priority = priority as string;
       if (technology) filters.technology = technology as string;
       if (search) filters.search = search as string;
+      if (role) filters.role = role as string;
       
       // Parse pagination parameters
       if (page) filters.page = parseInt(page as string, 10);
@@ -304,6 +309,26 @@ export class JobScraperController {
       res.status(500).json({
         status: "error",
         message: "Failed to fetch technologies",
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Get role filters for frontend
+  static async getRoleFilters(req: Request, res: Response): Promise<void> {
+    try {
+      res.status(200).json({
+        status: "success",
+        message: "Role filters retrieved",
+        data: MAIN_ROLE_FILTERS,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Error fetching role filters:", error);
+      res.status(500).json({
+        status: "error",
+        message: "Failed to fetch role filters",
         error: error instanceof Error ? error.message : "Unknown error",
         timestamp: new Date().toISOString(),
       });
@@ -534,6 +559,30 @@ export class JobScraperController {
     }
   }
 
+  // Manual trigger for all scrapers
+  static async runAllScrapersCronJob(req: Request, res: Response): Promise<void> {
+    try {
+      console.log("🕘 Manually triggering all scrapers...");
+      
+      await JobScraperController.cronJobService.runAllScrapers();
+
+      res.status(200).json({
+        status: "success",
+        message: "All scrapers executed successfully",
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Error running all scrapers:", error);
+
+      res.status(500).json({
+        status: "error",
+        message: "Failed to run all scrapers",
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
   // Start the daily cron job
   static async startDailyCronJob(req: Request, res: Response): Promise<void> {
     try {
@@ -573,6 +622,87 @@ export class JobScraperController {
       res.status(500).json({
         status: "error",
         message: "Failed to get cron job status",
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Job filtering methods removed - filtering happens automatically via cron job
+
+  // Analyze job categories and distribution
+  static async analyzeJobCategories(req: Request, res: Response): Promise<void> {
+    try {
+      console.log("📊 Analyzing job categories...");
+      
+      const jobFilterService = new JobFilterService();
+      const analysis = await jobFilterService.analyzeJobDistribution();
+      
+      res.status(200).json({
+        status: "success",
+        message: "Job category analysis completed",
+        data: analysis,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Error analyzing job categories:", error);
+      res.status(500).json({
+        status: "error",
+        message: "Failed to analyze job categories",
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Analyze technologies in database
+  static async analyzeTechnologies(req: Request, res: Response): Promise<void> {
+    try {
+      console.log("📊 Analyzing technologies in database...");
+      
+      // Get all technologies
+      const technologies = await JobScraperController.supabaseService.getTechnologies();
+      
+      // Get all jobs with their technologies
+      const allJobsResult = await JobScraperController.supabaseService.getJobs({
+        limit: 10000
+      });
+      
+      // Count technology usage
+      const techUsageCount: { [key: string]: number } = {};
+      allJobsResult.data.forEach(job => {
+        if (job.technologies && Array.isArray(job.technologies)) {
+          job.technologies.forEach((tech: any) => {
+            const techName = typeof tech === 'string' ? tech : tech.name;
+            if (techName) {
+              techUsageCount[techName] = (techUsageCount[techName] || 0) + 1;
+            }
+          });
+        }
+      });
+      
+      // Sort technologies by usage
+      const sortedTechUsage = Object.entries(techUsageCount)
+        .sort(([, a], [, b]) => b - a)
+        .map(([tech, count]) => ({ technology: tech, count }));
+      
+      res.status(200).json({
+        status: "success",
+        message: "Technology analysis completed",
+        data: {
+          totalTechnologies: technologies.length,
+          totalJobs: allJobsResult.total,
+          technologies: technologies,
+          topUsedTechnologies: sortedTechUsage.slice(0, 50),
+          allTechnologyUsage: sortedTechUsage
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Error analyzing technologies:", error);
+      res.status(500).json({
+        status: "error",
+        message: "Failed to analyze technologies",
         error: error instanceof Error ? error.message : "Unknown error",
         timestamp: new Date().toISOString(),
       });

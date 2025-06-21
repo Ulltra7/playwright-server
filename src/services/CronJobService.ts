@@ -1,30 +1,43 @@
 import * as cron from 'node-cron';
 import { ArbeitnowScraper } from './ArbeitnowScraper';
+import { SwissDevJobsScraper } from '../scrapers/SwissDevJobsScraper';
 import { SupabaseService } from './SupabaseService';
+import { JobFilterService } from './JobFilterService';
 
 export class CronJobService {
   private supabaseService: SupabaseService;
   private arbeitnowScraper: ArbeitnowScraper;
+  private swissDevJobsScraper: SwissDevJobsScraper;
+  private jobFilterService: JobFilterService;
 
   constructor() {
     this.supabaseService = new SupabaseService();
     this.arbeitnowScraper = new ArbeitnowScraper();
+    this.swissDevJobsScraper = new SwissDevJobsScraper();
+    this.jobFilterService = new JobFilterService();
   }
 
-  // Schedule daily job scraping at 9:00 AM
+  // Schedule daily job scraping at midnight and filtering 30 minutes later
   startDailyJobScraping(): void {
     console.log('🕘 Starting daily job scraping cron job...');
     
-    // Cron expression: '0 9 * * *' = At 9:00 AM every day
-    // For testing, you can use '*/5 * * * *' for every 5 minutes
-    cron.schedule('0 9 * * *', async () => {
+    // Cron expression: '0 0 * * *' = At midnight every day
+    cron.schedule('0 0 * * *', async () => {
       console.log('🚀 Daily job scraping started at:', new Date().toISOString());
-      await this.runArbeitnowScraping();
+      await this.runAllScrapers();
     }, {
-      timezone: "Europe/Zurich" // Adjust timezone as needed
+      timezone: "Europe/Zurich"
     });
 
-    console.log('✅ Daily job scraping cron job scheduled for 9:00 AM daily');
+    // Schedule IT job filtering at 00:30 (30 minutes after scraping)
+    cron.schedule('30 0 * * *', async () => {
+      console.log('🔍 Daily IT job filtering started at:', new Date().toISOString());
+      await this.runITJobFiltering();
+    }, {
+      timezone: "Europe/Zurich"
+    });
+
+    console.log('✅ Daily job scraping scheduled for midnight and filtering for 00:30');
   }
 
   // Manual trigger for testing
@@ -83,6 +96,124 @@ export class CronJobService {
     }
   }
 
+  // Run IT job filtering
+  async runITJobFiltering(): Promise<void> {
+    try {
+      console.log('🔍 Starting IT job filtering...');
+      
+      const startTime = Date.now();
+      
+      // Filter out non-IT jobs
+      const result = await this.jobFilterService.filterNonITJobs();
+      
+      const endTime = Date.now();
+      const duration = (endTime - startTime) / 1000;
+      
+      console.log(`✅ IT job filtering completed in ${duration}s:`);
+      console.log(`   • Total jobs analyzed: ${result.totalJobs}`);
+      console.log(`   • IT jobs kept: ${result.itJobs}`);
+      console.log(`   • Non-IT jobs removed: ${result.removedJobs}`);
+      
+      if (result.removedJobsList.length > 0) {
+        console.log('🗑️ Sample of removed jobs:');
+        result.removedJobsList.slice(0, 5).forEach(job => {
+          console.log(`   - ${job.title} at ${job.company} (${job.reason})`);
+        });
+      }
+      
+      // Log updated statistics
+      await this.logJobStats();
+      
+    } catch (error) {
+      console.error('❌ Error during IT job filtering:', error);
+    }
+  }
+
+  // Run all scrapers
+  async runAllScrapers(): Promise<void> {
+    console.log('🚀 Starting all job scrapers...');
+    
+    // Run scrapers in parallel for efficiency
+    const scraperPromises = [
+      this.runArbeitnowScraping().catch(error => {
+        console.error('❌ Arbeitnow scraping failed:', error);
+        return null;
+      }),
+      this.runSwissDevJobsScraping().catch(error => {
+        console.error('❌ SwissDevJobs scraping failed:', error);
+        return null;
+      })
+    ];
+
+    await Promise.all(scraperPromises);
+    
+    console.log('✅ All scrapers completed');
+    
+    // Log final statistics
+    await this.logJobStats();
+  }
+
+  // Run SwissDevJobs scraping
+  async runSwissDevJobsScraping(): Promise<void> {
+    try {
+      console.log('🔄 Starting SwissDevJobs scraping job...');
+      
+      const startTime = Date.now();
+      
+      // Scrape jobs from SwissDevJobs
+      const result = await this.swissDevJobsScraper.scrapeJobs();
+      
+      if (!result.jobs || result.jobs.length === 0) {
+        console.log('ℹ️ No new jobs found from SwissDevJobs');
+        return;
+      }
+      
+      console.log(`📊 Scraped ${result.jobs.length} jobs from SwissDevJobs`);
+
+      // Convert to format expected by SupabaseService
+      const jobsWithTechnologies = result.jobs.map(job => ({
+        job: {
+          job_title: job.title,
+          company: job.company,
+          location: job.location,
+          job_url: job.url,
+          salary: job.salary,
+          description: job.description,
+          requirements: job.requirements?.join("\n"),
+          source_id: "",
+          scraped_at: new Date(),
+          application_status: "not_applied" as const,
+          priority: "medium" as const,
+          source: { 
+            name: "swissdevjobs", 
+            display_name: "Swiss Dev Jobs",
+            base_url: "https://swissdevjobs.ch"
+          },
+        },
+        technologies: job.technologies || [],
+      }));
+
+      // Insert jobs into database
+      const insertResult = await this.supabaseService.bulkInsertJobs(jobsWithTechnologies);
+      
+      const endTime = Date.now();
+      const duration = (endTime - startTime) / 1000;
+      
+      console.log(`✅ SwissDevJobs scraping completed in ${duration}s:`);
+      console.log(`   • ${insertResult.inserted} jobs inserted`);
+      console.log(`   • ${insertResult.skipped} jobs skipped (duplicates)`);
+      console.log(`   • ${insertResult.errors.length} errors`);
+      
+      if (insertResult.errors.length > 0) {
+        console.log('❌ Errors during insertion:');
+        insertResult.errors.forEach(error => console.log(`   - ${error}`));
+      }
+      
+    } catch (error) {
+      console.error('❌ Error during SwissDevJobs scraping job:', error);
+    }
+  }
+
   // Test method to run scraping every 5 minutes (for development)
   startTestScraping(): void {
     console.log('🧪 Starting test job scraping (every 5 minutes)...');
@@ -103,9 +234,16 @@ export class CronJobService {
   }
 
   // Get status of all scheduled jobs
-  getJobsStatus(): { status: string } {
+  getJobsStatus(): { status: string; details: string[] } {
     return {
-      status: 'Daily job scraping is scheduled for 9:00 AM daily'
+      status: 'Daily job processing is active',
+      details: [
+        'Job scraping: Scheduled at midnight (00:00) daily',
+        '  - Arbeitnow (API)',
+        '  - SwissDevJobs (Web scraping)',
+        'IT job filtering: Scheduled at 00:30 daily (30 minutes after scraping)',
+        'Timezone: Europe/Zurich'
+      ]
     };
   }
 }

@@ -6,24 +6,6 @@ const router = Router();
 // Health check endpoint
 router.get("/health", JobScraperController.healthCheck);
 
-// Job scraping endpoints
-router.get("/scrape/swissdevjobs", JobScraperController.scrapeSwissDevJobs);
-router.post(
-  "/scrape/swissdevjobs/save",
-  JobScraperController.scrapeAndSaveSwissDevJobs
-);
-
-// Arbeitnow scraping endpoints
-router.post(
-  "/scrape/arbeitnow/save",
-  JobScraperController.scrapeAndSaveArbeitnowJobs
-);
-
-// Cron job endpoints
-router.post("/cron/arbeitnow/run", JobScraperController.runArbeitnowCronJob);
-router.post("/cron/start", JobScraperController.startDailyCronJob);
-router.get("/cron/status", JobScraperController.getCronJobStatus);
-
 // Job management endpoints
 router.get("/jobs", JobScraperController.getJobs);
 router.get("/jobs/stats", JobScraperController.getJobStats);
@@ -39,5 +21,12 @@ router.post("/jobs/apply", JobScraperController.applyToJobs);
 // Reference data endpoints
 router.get("/jobs/sources", JobScraperController.getJobSources);
 router.get("/jobs/technologies", JobScraperController.getTechnologies);
+router.get("/jobs/role-filters", JobScraperController.getRoleFilters);
+
+// Analysis endpoints
+router.get("/jobs/analyze-technologies", JobScraperController.analyzeTechnologies);
+router.get("/jobs/analyze-categories", JobScraperController.analyzeJobCategories);
+
+// Job filtering endpoints - removed for security, filtering happens automatically after scraping
 
 export default router;

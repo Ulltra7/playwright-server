@@ -17,6 +17,7 @@ export interface Technology {
   id?: string;
   name: string;
   category?: string;
+  job_roles?: string[];
   description?: string;
   created_at?: Date;
 }
@@ -163,6 +164,10 @@ export class SupabaseService {
       }
 
       console.log(`✨ Created new technology: ${normalizedName}`);
+      
+      // Link the new technology to appropriate job roles
+      await this.linkTechnologyToJobRoles(newTech.id, normalizedName);
+      
       return newTech.id;
     } catch (error) {
       console.error("Error in getOrCreateTechnology:", error);
@@ -362,6 +367,191 @@ export class SupabaseService {
     }
 
     return matrix[str2.length][str1.length];
+  }
+
+  // Link technology to job roles
+  private async linkTechnologyToJobRoles(technologyId: string, technologyName: string): Promise<void> {
+    try {
+      const roles = this.determineJobRoles(technologyName);
+      
+      if (roles.length === 0) {
+        console.log(`⚠️ No job roles determined for technology: ${technologyName}`);
+        return;
+      }
+
+      // Get job role IDs
+      const roleInserts = [];
+      for (const { roleName, relevanceScore } of roles) {
+        const { data: roleData } = await this.supabase
+          .from("job_roles")
+          .select("id")
+          .eq("name", roleName)
+          .single();
+        
+        if (roleData) {
+          roleInserts.push({
+            technology_id: technologyId,
+            job_role_id: roleData.id,
+            relevance_score: relevanceScore
+          });
+        }
+      }
+
+      if (roleInserts.length > 0) {
+        const { error } = await this.supabase
+          .from("technology_job_roles")
+          .insert(roleInserts);
+        
+        if (error) {
+          console.error("Error linking technology to roles:", error);
+        } else {
+          console.log(`🔗 Linked ${technologyName} to ${roleInserts.length} job roles`);
+        }
+      }
+    } catch (error) {
+      console.error("Error in linkTechnologyToJobRoles:", error);
+    }
+  }
+
+  // Determine job roles for a technology
+  private determineJobRoles(name: string): Array<{ roleName: string; relevanceScore: number }> {
+    const lowerName = name.toLowerCase();
+    const roles: Array<{ roleName: string; relevanceScore: number }> = [];
+
+    const roleMapping: Record<string, { keywords: string[]; score: number }> = {
+      frontend_developer: {
+        keywords: [
+          'react', 'angular', 'vue', 'svelte', 'jquery', 'html', 'css', 'sass', 'less',
+          'bootstrap', 'tailwind', 'material-ui', 'webpack', 'vite', 'babel', 'next.js',
+          'nuxt', 'gatsby', 'emotion', 'styled-components', 'redux', 'mobx', 'vuex'
+        ],
+        score: 100
+      },
+      backend_developer: {
+        keywords: [
+          'node.js', 'express', 'django', 'flask', 'fastapi', 'laravel', 'spring',
+          '.net', 'asp.net', 'rails', 'golang', 'rust', 'php', 'java', 'c#', 'python',
+          'ruby', 'nest.js', 'koa', 'hapi', 'sinatra', 'gin', 'echo', 'fiber'
+        ],
+        score: 100
+      },
+      mobile_developer: {
+        keywords: [
+          'react native', 'flutter', 'swift', 'kotlin', 'ionic', 'xamarin',
+          'android', 'ios', 'objective-c', 'swiftui', 'jetpack compose'
+        ],
+        score: 100
+      },
+      devops_engineer: {
+        keywords: [
+          'docker', 'kubernetes', 'terraform', 'ansible', 'jenkins', 'gitlab',
+          'github actions', 'circleci', 'helm', 'prometheus', 'grafana', 'elk',
+          'nginx', 'apache', 'travis', 'bamboo', 'puppet', 'chef', 'vault'
+        ],
+        score: 100
+      },
+      cloud_architect: {
+        keywords: [
+          'aws', 'azure', 'google cloud', 'gcp', 'cloudformation', 'serverless',
+          'lambda', 'ec2', 's3', 'cloudfront', 'api gateway', 'cloud functions'
+        ],
+        score: 100
+      },
+      data_scientist: {
+        keywords: [
+          'tensorflow', 'pytorch', 'scikit-learn', 'keras', 'pandas', 'numpy',
+          'jupyter', 'r', 'sas', 'matlab', 'scipy', 'statsmodels', 'seaborn',
+          'matplotlib', 'plotly', 'nltk', 'spacy', 'opencv'
+        ],
+        score: 100
+      },
+      data_engineer: {
+        keywords: [
+          'spark', 'hadoop', 'airflow', 'kafka', 'flink', 'beam', 'dbt',
+          'snowflake', 'redshift', 'bigquery', 'databricks', 'presto', 'hive'
+        ],
+        score: 100
+      },
+      database_administrator: {
+        keywords: [
+          'postgresql', 'mysql', 'oracle', 'sql server', 'mariadb', 'db2',
+          'sybase', 'backup', 'replication', 'performance tuning'
+        ],
+        score: 90
+      },
+      qa_engineer: {
+        keywords: [
+          'jest', 'cypress', 'selenium', 'playwright', 'mocha', 'jasmine',
+          'junit', 'testng', 'postman', 'jmeter', 'loadrunner', 'appium',
+          'cucumber', 'robot framework', 'pytest', 'rspec'
+        ],
+        score: 100
+      },
+      security_engineer: {
+        keywords: [
+          'owasp', 'burp suite', 'metasploit', 'nessus', 'wireshark',
+          'kali', 'siem', 'splunk', 'crowdstrike', 'okta', 'auth0',
+          'oauth', 'jwt', 'encryption', 'penetration testing'
+        ],
+        score: 100
+      },
+      ux_ui_designer: {
+        keywords: [
+          'figma', 'sketch', 'adobe xd', 'photoshop', 'illustrator',
+          'invision', 'zeplin', 'principle', 'framer', 'after effects',
+          'prototyping', 'wireframing', 'user research'
+        ],
+        score: 100
+      },
+      product_manager: {
+        keywords: [
+          'jira', 'confluence', 'productboard', 'amplitude', 'mixpanel',
+          'google analytics', 'a/b testing', 'roadmapping', 'user stories'
+        ],
+        score: 90
+      },
+      ai_ml_engineer: {
+        keywords: [
+          'machine learning', 'deep learning', 'neural network', 'nlp',
+          'computer vision', 'reinforcement learning', 'gan', 'transformer',
+          'bert', 'gpt', 'llm', 'hugging face', 'mlflow', 'kubeflow'
+        ],
+        score: 100
+      }
+    };
+
+    // Check each role's technologies
+    for (const [roleName, config] of Object.entries(roleMapping)) {
+      if (config.keywords.some(keyword => lowerName.includes(keyword) || keyword.includes(lowerName))) {
+        roles.push({ roleName, relevanceScore: config.score });
+      }
+    }
+
+    // Add fullstack_developer if both frontend and backend
+    const hasRole = (name: string) => roles.some(r => r.roleName === name);
+    if (hasRole('frontend_developer') && hasRole('backend_developer')) {
+      if (!hasRole('fullstack_developer')) {
+        roles.push({ roleName: 'fullstack_developer', relevanceScore: 100 });
+      }
+    }
+
+    // Generic programming languages can be used by multiple roles
+    const genericTechs = ['git', 'github', 'gitlab', 'agile', 'scrum', 'rest api', 'graphql'];
+    if (genericTechs.some(tech => lowerName.includes(tech))) {
+      const genericRoles = [
+        { roleName: 'frontend_developer', relevanceScore: 60 },
+        { roleName: 'backend_developer', relevanceScore: 60 },
+        { roleName: 'mobile_developer', relevanceScore: 60 }
+      ];
+      
+      for (const genericRole of genericRoles) {
+        if (!hasRole(genericRole.roleName)) {
+          roles.push(genericRole);
+        }
+      }
+    }
+
+    return roles;
   }
 
   // Auto-categorize technology based on name
@@ -587,6 +777,7 @@ export class SupabaseService {
     priority?: JobApplication["priority"];
     technology?: string;
     search?: string;
+    role?: string;
     page?: number;
     limit?: number;
     sortBy?: string;
@@ -629,6 +820,47 @@ export class SupabaseService {
       if (filters?.search) {
         countQuery = countQuery.or(`job_title.ilike.%${filters.search}%,company.ilike.%${filters.search}%,location.ilike.%${filters.search}%`);
       }
+      
+      // Handle role filtering
+      if (filters?.role) {
+        // Support multiple roles (comma-separated)
+        const roles = filters.role.split(',').map(r => r.trim());
+        
+        // Map role filter key to actual role names
+        const roleMapping: Record<string, string[]> = {
+          'frontend': ['frontend_developer'],
+          'backend': ['backend_developer', 'fullstack_developer'],
+          'mobile': ['mobile_developer'],
+          'data': ['data_scientist', 'data_engineer', 'ai_ml_engineer'],
+          'management': ['it_manager', 'project_manager', 'product_manager', 'scrum_master'],
+          'ux_ui_designer': ['ux_ui_designer']
+        };
+        
+        const roleTechPatterns: Record<string, string[]> = {
+          'frontend': ['React', 'Angular', 'Vue', 'CSS', 'JavaScript', 'TypeScript', 'HTML', 'Tailwind', 'Bootstrap'],
+          'backend': ['Node.js', 'Python', 'Java', 'C#', 'PHP', 'Ruby', 'PostgreSQL', 'MySQL', 'Express', 'Django', 'Spring'],
+          'mobile': ['React Native', 'Flutter', 'Swift', 'Kotlin', 'iOS', 'Android', 'Xamarin'],
+          'data': ['Python', 'TensorFlow', 'PyTorch', 'Pandas', 'Spark', 'SQL', 'R', 'Jupyter', 'NumPy'],
+          'management': ['Jira', 'Confluence', 'Scrum', 'Agile', 'Project Management'],
+          'ux_ui_designer': ['Figma', 'Sketch', 'Adobe XD', 'Photoshop', 'Illustrator', 'InVision', 'UI/UX', 'Design']
+        };
+        
+        // Collect all tech patterns for the selected roles
+        const allTechs: string[] = [];
+        roles.forEach(role => {
+          const techs = roleTechPatterns[role];
+          if (techs) {
+            allTechs.push(...techs);
+          }
+        });
+        
+        if (allTechs.length > 0) {
+          // Remove duplicates
+          const uniqueTechs = [...new Set(allTechs)];
+          const techConditions = uniqueTechs.map(tech => `technologies.cs.{${tech}}`).join(',');
+          countQuery = countQuery.or(techConditions);
+        }
+      }
 
       const { count } = await countQuery;
 
@@ -657,6 +889,37 @@ export class SupabaseService {
       }
       if (filters?.search) {
         query = query.or(`job_title.ilike.%${filters.search}%,company.ilike.%${filters.search}%,location.ilike.%${filters.search}%`);
+      }
+      
+      // Handle role filtering (same as count query)
+      if (filters?.role) {
+        // Support multiple roles (comma-separated)
+        const roles = filters.role.split(',').map(r => r.trim());
+        
+        const roleTechPatterns: Record<string, string[]> = {
+          'frontend': ['React', 'Angular', 'Vue', 'CSS', 'JavaScript', 'TypeScript', 'HTML', 'Tailwind', 'Bootstrap'],
+          'backend': ['Node.js', 'Python', 'Java', 'C#', 'PHP', 'Ruby', 'PostgreSQL', 'MySQL', 'Express', 'Django', 'Spring'],
+          'mobile': ['React Native', 'Flutter', 'Swift', 'Kotlin', 'iOS', 'Android', 'Xamarin'],
+          'data': ['Python', 'TensorFlow', 'PyTorch', 'Pandas', 'Spark', 'SQL', 'R', 'Jupyter', 'NumPy'],
+          'management': ['Jira', 'Confluence', 'Scrum', 'Agile', 'Project Management'],
+          'ux_ui_designer': ['Figma', 'Sketch', 'Adobe XD', 'Photoshop', 'Illustrator', 'InVision', 'UI/UX', 'Design']
+        };
+        
+        // Collect all tech patterns for the selected roles
+        const allTechs: string[] = [];
+        roles.forEach(role => {
+          const techs = roleTechPatterns[role];
+          if (techs) {
+            allTechs.push(...techs);
+          }
+        });
+        
+        if (allTechs.length > 0) {
+          // Remove duplicates
+          const uniqueTechs = [...new Set(allTechs)];
+          const techConditions = uniqueTechs.map(tech => `technologies.cs.{${tech}}`).join(',');
+          query = query.or(techConditions);
+        }
       }
 
       const { data, error } = await query;
@@ -903,6 +1166,26 @@ export class SupabaseService {
     } catch (error) {
       console.error("Error in getTechnologies:", error);
       return [];
+    }
+  }
+
+  // Delete a job by ID
+  async deleteJob(jobId: string): Promise<boolean> {
+    try {
+      const { error } = await this.supabase
+        .from(this.tableName)
+        .delete()
+        .eq("id", jobId);
+
+      if (error) {
+        console.error("Error deleting job:", error);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Error in deleteJob:", error);
+      return false;
     }
   }
 }
