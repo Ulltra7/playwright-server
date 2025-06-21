@@ -823,6 +823,9 @@ export class SupabaseService {
       
       // Handle role filtering
       if (filters?.role) {
+        // For now, we'll use technology-based filtering until the jobs_with_roles view is created
+        // TODO: Switch to using job_roles column once the view is available
+        
         // Support multiple roles (comma-separated)
         const roles = filters.role.split(',').map(r => r.trim());
         
@@ -836,29 +839,29 @@ export class SupabaseService {
           'ux_ui_designer': ['ux_ui_designer']
         };
         
-        const roleTechPatterns: Record<string, string[]> = {
-          'frontend': ['React', 'Angular', 'Vue', 'CSS', 'JavaScript', 'TypeScript', 'HTML', 'Tailwind', 'Bootstrap'],
-          'backend': ['Node.js', 'Python', 'Java', 'C#', 'PHP', 'Ruby', 'PostgreSQL', 'MySQL', 'Express', 'Django', 'Spring'],
-          'mobile': ['React Native', 'Flutter', 'Swift', 'Kotlin', 'iOS', 'Android', 'Xamarin'],
-          'data': ['Python', 'TensorFlow', 'PyTorch', 'Pandas', 'Spark', 'SQL', 'R', 'Jupyter', 'NumPy'],
-          'management': ['Jira', 'Confluence', 'Scrum', 'Agile', 'Project Management'],
-          'ux_ui_designer': ['Figma', 'Sketch', 'Adobe XD', 'Photoshop', 'Illustrator', 'InVision', 'UI/UX', 'Design']
+        // For now, filter by job title patterns that indicate the role
+        const roleTitlePatterns: Record<string, string[]> = {
+          'frontend': ['frontend', 'front-end', 'ui developer', 'react developer', 'angular developer', 'vue developer'],
+          'backend': ['backend', 'back-end', 'server', 'api developer', 'node developer', 'python developer', 'java developer'],
+          'mobile': ['mobile', 'ios', 'android', 'react native', 'flutter'],
+          'data': ['data scientist', 'data engineer', 'machine learning', 'ml engineer', 'ai engineer', 'data analyst'],
+          'management': ['manager', 'lead', 'head of', 'director', 'scrum master', 'product owner', 'project manager'],
+          'ux_ui_designer': ['designer', 'ux', 'ui', 'user experience', 'user interface', 'design']
         };
         
-        // Collect all tech patterns for the selected roles
-        const allTechs: string[] = [];
+        // Build title conditions
+        const titleConditions: string[] = [];
         roles.forEach(role => {
-          const techs = roleTechPatterns[role];
-          if (techs) {
-            allTechs.push(...techs);
+          const patterns = roleTitlePatterns[role];
+          if (patterns) {
+            patterns.forEach(pattern => {
+              titleConditions.push(`job_title.ilike.%${pattern}%`);
+            });
           }
         });
         
-        if (allTechs.length > 0) {
-          // Remove duplicates
-          const uniqueTechs = [...new Set(allTechs)];
-          const techConditions = uniqueTechs.map(tech => `technologies.cs.{${tech}}`).join(',');
-          countQuery = countQuery.or(techConditions);
+        if (titleConditions.length > 0) {
+          countQuery = countQuery.or(titleConditions.join(','));
         }
       }
 
@@ -896,29 +899,29 @@ export class SupabaseService {
         // Support multiple roles (comma-separated)
         const roles = filters.role.split(',').map(r => r.trim());
         
-        const roleTechPatterns: Record<string, string[]> = {
-          'frontend': ['React', 'Angular', 'Vue', 'CSS', 'JavaScript', 'TypeScript', 'HTML', 'Tailwind', 'Bootstrap'],
-          'backend': ['Node.js', 'Python', 'Java', 'C#', 'PHP', 'Ruby', 'PostgreSQL', 'MySQL', 'Express', 'Django', 'Spring'],
-          'mobile': ['React Native', 'Flutter', 'Swift', 'Kotlin', 'iOS', 'Android', 'Xamarin'],
-          'data': ['Python', 'TensorFlow', 'PyTorch', 'Pandas', 'Spark', 'SQL', 'R', 'Jupyter', 'NumPy'],
-          'management': ['Jira', 'Confluence', 'Scrum', 'Agile', 'Project Management'],
-          'ux_ui_designer': ['Figma', 'Sketch', 'Adobe XD', 'Photoshop', 'Illustrator', 'InVision', 'UI/UX', 'Design']
+        // For now, filter by job title patterns that indicate the role
+        const roleTitlePatterns: Record<string, string[]> = {
+          'frontend': ['frontend', 'front-end', 'ui developer', 'react developer', 'angular developer', 'vue developer'],
+          'backend': ['backend', 'back-end', 'server', 'api developer', 'node developer', 'python developer', 'java developer'],
+          'mobile': ['mobile', 'ios', 'android', 'react native', 'flutter'],
+          'data': ['data scientist', 'data engineer', 'machine learning', 'ml engineer', 'ai engineer', 'data analyst'],
+          'management': ['manager', 'lead', 'head of', 'director', 'scrum master', 'product owner', 'project manager'],
+          'ux_ui_designer': ['designer', 'ux', 'ui', 'user experience', 'user interface', 'design']
         };
         
-        // Collect all tech patterns for the selected roles
-        const allTechs: string[] = [];
+        // Build title conditions
+        const titleConditions: string[] = [];
         roles.forEach(role => {
-          const techs = roleTechPatterns[role];
-          if (techs) {
-            allTechs.push(...techs);
+          const patterns = roleTitlePatterns[role];
+          if (patterns) {
+            patterns.forEach(pattern => {
+              titleConditions.push(`job_title.ilike.%${pattern}%`);
+            });
           }
         });
         
-        if (allTechs.length > 0) {
-          // Remove duplicates
-          const uniqueTechs = [...new Set(allTechs)];
-          const techConditions = uniqueTechs.map(tech => `technologies.cs.{${tech}}`).join(',');
-          query = query.or(techConditions);
+        if (titleConditions.length > 0) {
+          query = query.or(titleConditions.join(','));
         }
       }
 
