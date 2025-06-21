@@ -1457,4 +1457,65 @@ export class SupabaseService {
       return false;
     }
   }
+
+  // Get job roles weekly statistics
+  async getJobRolesWeekly(): Promise<any[]> {
+    try {
+      const { data, error } = await this.supabase
+        .from("job_roles_weekly")
+        .select("*")
+        .order("week_start", { ascending: false })
+        .order("job_count", { ascending: false });
+
+      if (error) {
+        console.error("Error fetching job roles weekly:", error);
+        return [];
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error("Error in getJobRolesWeekly:", error);
+      return [];
+    }
+  }
+
+  // Get current week job roles statistics
+  async getJobRolesCurrentWeek(): Promise<any[]> {
+    try {
+      const { data, error } = await this.supabase
+        .from("job_roles_current_week")
+        .select("*");
+
+      if (error) {
+        console.error("Error fetching current week job roles:", error);
+        return [];
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error("Error in getJobRolesCurrentWeek:", error);
+      return [];
+    }
+  }
+
+  // Get job roles trend (last 4 weeks)
+  async getJobRolesTrend(): Promise<any[]> {
+    try {
+      const { data, error } = await this.supabase
+        .from("job_roles_trend")
+        .select("*")
+        .order("main_role")
+        .order("week_label", { ascending: false });
+
+      if (error) {
+        console.error("Error fetching job roles trend:", error);
+        return [];
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error("Error in getJobRolesTrend:", error);
+      return [];
+    }
+  }
 }

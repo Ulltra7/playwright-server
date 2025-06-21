@@ -72,7 +72,7 @@ export class SwissDevJobsScraper extends JobScraper {
     }
   }
 
-  private async scrollAndCollectAllJobs(): Promise<JobListing[]> {
+  async scrollAndCollectAllJobs(): Promise<JobListing[]> {
     if (!this.page) {
       throw new Error("Browser not initialized");
     }
@@ -168,7 +168,10 @@ export class SwissDevJobsScraper extends JobScraper {
       const uniqueJobs = Array.from(jobsMap.values());
       console.log(`🏁 Collection complete: ${uniqueJobs.length} unique jobs found`);
 
-      return uniqueJobs;
+      // Fetch descriptions for all collected jobs
+      const jobsWithDescriptions = await this.fetchJobDescriptions(uniqueJobs);
+
+      return jobsWithDescriptions;
 
     } catch (error) {
       console.error("❌ Error during job collection:", error);
@@ -275,6 +278,84 @@ export class SwissDevJobsScraper extends JobScraper {
     }
 
     return jobs;
+  }
+
+  private async fetchJobDescriptions(jobs: JobListing[]): Promise<JobListing[]> {
+    if (!this.page) {
+      throw new Error("Browser not initialized");
+    }
+
+    console.log(`\n📄 Fetching descriptions for ${jobs.length} jobs...`);
+    const jobsWithDescriptions: JobListing[] = [];
+
+    for (let i = 0; i < jobs.length; i++) {
+      const job = jobs[i];
+      try {
+        console.log(`\n[${i + 1}/${jobs.length}] Fetching description for: ${job.title} at ${job.company}`);
+        
+        // Navigate to the job page
+        await this.page.goto(job.url, { 
+          waitUntil: 'networkidle',
+          timeout: 30000 
+        });
+
+        // Wait for job details to load
+        await this.page.waitForSelector('.job-details-section-box', { timeout: 5000 });
+
+        // Extract description from div with class job-details-section-box that contains "Description" title
+        const description = await this.page.evaluate(() => {
+          const sectionBoxes = Array.from(document.querySelectorAll('.job-details-section-box'));
+          
+          // Find the section box that contains "Description" in its title
+          const descriptionBox = sectionBoxes.find(box => {
+            const titleElement = box.querySelector('h2, h3, h4, .section-title');
+            return titleElement && titleElement.textContent?.toLowerCase().includes('description');
+          });
+
+          if (descriptionBox) {
+            // Get all text content from the description box, excluding the title
+            const title = descriptionBox.querySelector('h2, h3, h4, .section-title');
+            if (title) {
+              title.remove(); // Remove title to get only description content
+            }
+            return descriptionBox.textContent?.trim() || "";
+          }
+
+          // Fallback: try to find any section with description-like content
+          const fallbackBox = sectionBoxes.find(box => {
+            const text = box.textContent?.toLowerCase() || "";
+            return text.includes('responsibilities') || text.includes('what you') || text.includes('role');
+          });
+
+          return fallbackBox ? fallbackBox.textContent?.trim() || "" : "";
+        });
+
+        // Add description to job object
+        const jobWithDescription: JobListing = {
+          ...job,
+          description: description || "No description available"
+        };
+
+        jobsWithDescriptions.push(jobWithDescription);
+        console.log(`✅ Description fetched (${description?.length || 0} chars)`);
+
+        // Small delay to avoid overwhelming the server
+        if (i < jobs.length - 1) {
+          await this.page.waitForTimeout(1000);
+        }
+
+      } catch (error) {
+        console.log(`⚠️ Failed to fetch description for ${job.title}: ${error}`);
+        // Add job without description on error
+        jobsWithDescriptions.push({
+          ...job,
+          description: "Failed to fetch description"
+        });
+      }
+    }
+
+    console.log(`\n✅ Fetched descriptions for ${jobsWithDescriptions.filter(j => j.description && j.description !== "Failed to fetch description").length}/${jobs.length} jobs`);
+    return jobsWithDescriptions;
   }
 
   private async scrollToLoadAllJobs(): Promise<void> {
