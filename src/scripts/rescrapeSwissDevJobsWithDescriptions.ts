@@ -1,13 +1,24 @@
-import { CronJobService } from "../services/CronJobService";
+import { chromium } from 'playwright';
+import { SupabaseService } from "../services/SupabaseService";
+import { SwissDevJobsScraper } from "../scrapers/SwissDevJobsScraper";
 
 async function rescrapeSwissDevJobsWithDescriptions() {
   console.log("🚀 Starting SwissDevJobs scraping with descriptions...\n");
   
-  const cronJobService = new CronJobService();
+  const supabaseService = new SupabaseService();
+  const scraper = new SwissDevJobsScraper();
   
   try {
-    // Use the CronJobService to run the scraping with descriptions
-    await cronJobService.runSwissDevJobsScraping();
+    // Step 1: Run the scraper to get jobs
+    const scrapingResult = await scraper.scrapeJobs();
+    
+    if (!scrapingResult.jobs || scrapingResult.jobs.length === 0) {
+      console.log("❌ No jobs found from scraper");
+      return;
+    }
+    
+    const allJobs = scrapingResult.jobs;
+    console.log(`\n📊 Initial scraping complete! Found ${allJobs.length} jobs`);
     
     // Step 2: Process jobs in batches to fetch descriptions
     const batchSize = 10;
@@ -60,7 +71,7 @@ async function rescrapeSwissDevJobsWithDescriptions() {
 
           job.description = description || "No description available";
           
-          await page.waitForTimeout(500); // Small delay between requests
+          await new Promise(resolve => setTimeout(resolve, 500)); // Small delay between requests
           
         } catch (error) {
           console.log(`   ⚠️ Failed to fetch description: ${error}`);

@@ -15,7 +15,9 @@
     "debug-swissdevjobs": "ts-node-dev src/scripts/debugSwissDevJobs.ts",
     "update-swissdevjobs": "ts-node-dev src/scripts/updateSwissDevJobsCompanyLocation.ts",
     "rescrape-swissdevjobs": "ts-node-dev src/scripts/removeAndRescrapeSwissDevJobs.ts",
-    "scrape-swissdevjobs-desc": "ts-node-dev src/scripts/rescrapeSwissDevJobsWithDescriptions.ts"
+    "scrape-swissdevjobs-desc": "ts-node-dev src/scripts/rescrapeSwissDevJobsWithDescriptions.ts",
+    "populate-tech-roles": "ts-node-dev src/scripts/populateTechnologyRoles.ts",
+    "check-tech-roles": "ts-node-dev src/scripts/checkTechnologyRoleMappings.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.50.0",

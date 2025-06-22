@@ -20,27 +20,27 @@ export class CronJobService {
     this.nonITJobRemovalService = new NonITJobRemovalService();
   }
 
-  // Schedule daily job scraping at midnight and filtering 30 minutes later
+  // Schedule daily job scraping at 7:00 AM and filtering 15 minutes later
   startDailyJobScraping(): void {
     console.log('🕘 Starting daily job scraping cron job...');
     
-    // Cron expression: '0 0 * * *' = At midnight every day
-    cron.schedule('0 0 * * *', async () => {
+    // Cron expression: '0 7 * * *' = At 7:00 AM every day
+    cron.schedule('0 7 * * *', async () => {
       console.log('🚀 Daily job scraping started at:', new Date().toISOString());
       await this.runAllScrapers();
     }, {
       timezone: "Europe/Zurich"
     });
 
-    // Schedule IT job filtering at 00:30 (30 minutes after scraping)
-    cron.schedule('30 0 * * *', async () => {
+    // Schedule IT job filtering at 7:15 AM (15 minutes after scraping)
+    cron.schedule('15 7 * * *', async () => {
       console.log('🔍 Daily IT job filtering started at:', new Date().toISOString());
       await this.runITJobFiltering();
     }, {
       timezone: "Europe/Zurich"
     });
 
-    console.log('✅ Daily job scraping scheduled for midnight and filtering for 00:30');
+    console.log('✅ Daily job scraping scheduled for 7:00 AM and filtering for 7:15 AM');
   }
 
   // Manual trigger for testing
@@ -255,10 +255,10 @@ export class CronJobService {
     return {
       status: 'Daily job processing is active',
       details: [
-        'Job scraping: Scheduled at midnight (00:00) daily',
+        'Job scraping: Scheduled at 7:00 AM daily',
         '  - Arbeitnow (API)',
         '  - SwissDevJobs (Web scraping)',
-        'IT job filtering: Scheduled at 00:30 daily (30 minutes after scraping)',
+        'IT job filtering: Scheduled at 7:15 AM daily (15 minutes after scraping)',
         '  - Comprehensive non-IT keyword removal',
         '  - Category-based filtering',
         'Timezone: Europe/Zurich'
