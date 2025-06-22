@@ -1488,6 +1488,274 @@ export class SupabaseService {
       return [];
     }
   }
+
+  // Helper method to determine job role from title and technologies
+  private determineJobRole(title: string, technologies?: any[]): string {
+    const titleLower = title.toLowerCase();
+    
+    // Check each role's keywords
+    for (const [role, keywords] of Object.entries(JOB_ROLE_KEYWORDS)) {
+      // Check title keywords
+      if (keywords.titleKeywords.some(keyword => titleLower.includes(keyword))) {
+        return this.formatRoleName(role);
+      }
+    }
+    
+    // If no match in title, check technologies
+    if (technologies && technologies.length > 0) {
+      const techNames = technologies.map(t => 
+        (typeof t === 'string' ? t : t.name || '').toLowerCase()
+      );
+      
+      for (const [role, keywords] of Object.entries(JOB_ROLE_KEYWORDS)) {
+        const matchCount = keywords.techKeywords.filter(keyword => 
+          techNames.some(tech => tech.includes(keyword.toLowerCase()))
+        ).length;
+        
+        if (matchCount >= 2) { // At least 2 matching technologies
+          return this.formatRoleName(role);
+        }
+      }
+    }
+    
+    // Default categories based on common patterns
+    if (titleLower.includes('developer') || titleLower.includes('engineer')) {
+      return 'Software Developer';
+    }
+    if (titleLower.includes('architect')) {
+      return 'Software Architect';
+    }
+    if (titleLower.includes('analyst')) {
+      return 'Analyst';
+    }
+    if (titleLower.includes('consultant')) {
+      return 'Consultant';
+    }
+    
+    return 'Other';
+  }
+  
+  // Format role name for display
+  private formatRoleName(role: string): string {
+    const roleNames: { [key: string]: string } = {
+      'frontend_developer': 'Frontend Developer',
+      'backend_developer': 'Backend Developer',
+      'fullstack_developer': 'Full Stack Developer',
+      'mobile_developer': 'Mobile Developer',
+      'devops_engineer': 'DevOps Engineer',
+      'data_scientist': 'Data Scientist/Engineer',
+      'ai_engineer': 'AI/ML Engineer',
+      'qa_engineer': 'QA Engineer',
+      'designer': 'UI/UX Designer',
+      'it_manager': 'IT Manager/Lead'
+    };
+    
+    return roleNames[role] || role;
+  }
+
+  // Get active job counts by job role
+  async getActiveJobCountsByRole(): Promise<{ [role: string]: number }> {
+    try {
+      // Get all active jobs with their titles and technologies
+      const { data: activeJobs, error: jobsError } = await this.supabase
+        .from("jobs")
+        .select(`
+          id,
+          job_title,
+          job_technologies (
+            technologies (
+              name
+            )
+          )
+        `)
+        .eq("is_active", true);
+
+      if (jobsError) {
+        console.error("Error fetching active jobs:", jobsError);
+        return {};
+      }
+
+      // Count jobs by role
+      const roleCounts: { [role: string]: number } = {};
+
+      activeJobs?.forEach(job => {
+        // Extract technologies array
+        const technologies = job.job_technologies?.map((jt: any) => jt.technologies) || [];
+        
+        // Determine the job role
+        const role = this.determineJobRole(job.job_title, technologies);
+        
+        // Increment count for this role
+        roleCounts[role] = (roleCounts[role] || 0) + 1;
+      });
+
+      return roleCounts;
+    } catch (error) {
+      console.error("Error in getActiveJobCountsByRole:", error);
+      return {};
+    }
+  }
+
+  // Get active job counts by technology
+  async getActiveJobCountsByTechnology(): Promise<{ [technology: string]: number }> {
+    try {
+      // Query to get technology usage counts for active jobs
+      const { data, error } = await this.supabase
+        .from("job_technologies")
+        .select(`
+          technologies!inner (
+            name
+          ),
+          jobs!inner (
+            is_active
+          )
+        `)
+        .eq("jobs.is_active", true);
+
+      if (error) {
+        console.error("Error fetching technology counts:", error);
+        return {};
+      }
+
+      // Count occurrences of each technology
+      const techCounts: { [technology: string]: number } = {};
+
+      data?.forEach((item: any) => {
+        const techName = item.technologies?.name;
+        if (techName) {
+          techCounts[techName] = (techCounts[techName] || 0) + 1;
+        }
+      });
+
+      return techCounts;
+    } catch (error) {
+      console.error("Error in getActiveJobCountsByTechnology:", error);
+      return {};
+    }
+  }
+
+  // Get job role trends by week
+  async getJobRoleTrendsByWeek(weeksBack: number = 12): Promise<any> {
+    try {
+      // Calculate date range
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - (weeksBack * 7));
+      
+      // Get all jobs created within the date range
+      const { data: jobs, error } = await this.supabase
+        .from("jobs")
+        .select(`
+          id,
+          job_title,
+          created_at,
+          is_active,
+          job_technologies (
+            technologies (
+              name
+            )
+          )
+        `)
+        .gte("created_at", startDate.toISOString())
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        console.error("Error fetching jobs for trends:", error);
+        return { weeks: [], roles: [] };
+      }
+
+      // Group jobs by week and role
+      const weeklyData: { [weekKey: string]: { [role: string]: number } } = {};
+      const allRoles = new Set<string>();
+
+      jobs?.forEach(job => {
+        // Get the week start date (Monday)
+        const jobDate = new Date(job.created_at);
+        const weekStart = new Date(jobDate);
+        weekStart.setDate(jobDate.getDate() - jobDate.getDay() + 1); // Monday
+        weekStart.setHours(0, 0, 0, 0);
+        const weekKey = weekStart.toISOString().split('T')[0];
+
+        // Determine job role
+        const technologies = job.job_technologies?.map((jt: any) => jt.technologies) || [];
+        const role = this.determineJobRole(job.job_title, technologies);
+        allRoles.add(role);
+
+        // Initialize week data if needed
+        if (!weeklyData[weekKey]) {
+          weeklyData[weekKey] = {};
+        }
+
+        // Count the job for this role in this week
+        weeklyData[weekKey][role] = (weeklyData[weekKey][role] || 0) + 1;
+      });
+
+      // Convert to array format for easier consumption
+      const weeks = Object.keys(weeklyData).sort();
+      const rolesList = Array.from(allRoles).sort();
+      
+      // Build the trend data
+      const trendsData = weeks.map(week => {
+        const weekData: any = {
+          week,
+          weekDisplay: this.formatWeekDisplay(week),
+          total: 0,
+          roles: {}
+        };
+
+        rolesList.forEach(role => {
+          const count = weeklyData[week][role] || 0;
+          weekData.roles[role] = count;
+          weekData.total += count;
+        });
+
+        return weekData;
+      });
+
+      // Calculate totals and changes for each role
+      const roleSummary = rolesList.map(role => {
+        const counts = weeks.map(week => weeklyData[week][role] || 0);
+        const total = counts.reduce((sum, count) => sum + count, 0);
+        const lastWeek = counts[counts.length - 1] || 0;
+        const previousWeek = counts[counts.length - 2] || 0;
+        const change = previousWeek > 0 ? ((lastWeek - previousWeek) / previousWeek * 100).toFixed(1) : 
+                       lastWeek > 0 ? 100 : 0;
+
+        return {
+          role,
+          total,
+          lastWeek,
+          change: parseFloat(change as string),
+          trend: counts
+        };
+      }).sort((a, b) => b.total - a.total);
+
+      return {
+        weeks,
+        roles: rolesList,
+        data: trendsData,
+        summary: roleSummary,
+        period: {
+          start: startDate.toISOString().split('T')[0],
+          end: endDate.toISOString().split('T')[0],
+          weeksIncluded: weeks.length
+        }
+      };
+    } catch (error) {
+      console.error("Error in getJobRoleTrendsByWeek:", error);
+      return { weeks: [], roles: [], data: [], summary: [] };
+    }
+  }
+
+  // Format week display
+  private formatWeekDisplay(weekStart: string): string {
+    const date = new Date(weekStart);
+    const endDate = new Date(date);
+    endDate.setDate(date.getDate() + 6);
+    
+    const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+    return `${date.toLocaleDateString('en-US', options)} - ${endDate.toLocaleDateString('en-US', options)}`;
+  }
 }
 
 export default SupabaseService;

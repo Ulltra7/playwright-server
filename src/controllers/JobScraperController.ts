@@ -692,4 +692,42 @@ export class JobScraperController {
       });
     }
   }
+
+  static async getJobCountsByCategory(req: Request, res: Response): Promise<void> {
+    try {
+      // Get job counts by role
+      const roleCounts = await JobScraperController.supabaseService.getActiveJobCountsByRole();
+
+      // Calculate total active jobs
+      const totalActiveJobs = Object.values(roleCounts).reduce((sum, count) => sum + count, 0);
+
+      // Sort roles by count (descending)
+      const sortedRoles = Object.entries(roleCounts)
+        .sort(([, a], [, b]) => b - a)
+        .map(([role, count]) => ({
+          role,
+          count,
+          percentage: totalActiveJobs > 0 ? ((count / totalActiveJobs) * 100).toFixed(1) : "0.0"
+        }));
+
+      res.status(200).json({
+        status: "success",
+        message: "Job counts by role retrieved successfully",
+        data: {
+          totalActiveJobs,
+          roles: sortedRoles,
+          summary: roleCounts
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Error getting job counts by role:", error);
+      res.status(500).json({
+        status: "error",
+        message: "Failed to get job counts by role",
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
 }
