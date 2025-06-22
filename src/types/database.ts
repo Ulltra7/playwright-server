@@ -30,7 +30,7 @@ export interface JobWithRole {
   company: string;
   location: string;
   job_url: string;
-  scraped_at: Date;
+  update_at: Date;
   job_role_id?: string;
   job_role_name?: string;
   job_role_display_name?: string;

@@ -1,12 +1,12 @@
 import { Request, Response } from "express";
 import { SwissDevJobsScraper } from "../scrapers/SwissDevJobsScraper";
 import { ScraperResponse } from "../types/job";
-import { SupabaseService } from "../services/SupabaseService";
+import { SupabaseService, JobApplication } from "../services/SupabaseService";
 import {
   JobApplicationService,
   JobApplicationResult,
 } from "../services/JobApplicationService";
-import { ArbeitnowScraper } from "../services/ArbeitnowScraper";
+import { ArbeitnowScraper } from "../scrapers/ArbeitnowScraper";
 import { CronJobService } from "../services/CronJobService";
 import { JobFilterService } from "../services/JobFilterService";
 import { MAIN_ROLE_FILTERS } from "../config/roleFilters";
@@ -72,28 +72,10 @@ export class JobScraperController {
         return;
       }
 
-      // Convert scraped jobs to the format expected by SupabaseService
-      const jobsWithTechnologies = scrapedResult.jobs.map((job) => ({
-        job: {
-          job_title: job.title,
-          company: job.company,
-          location: job.location,
-          job_url: job.url,
-          salary: job.salary,
-          description: job.description,
-          requirements: job.requirements?.join("\n"),
-          source_id: "", // Will be handled by SupabaseService
-          scraped_at: new Date(),
-          application_status: "not_applied" as const,
-          priority: "medium" as const,
-          source: { name: "swissdevjobs", display_name: "Swiss Dev Jobs" },
-        },
-        technologies: job.technologies || [],
-      }));
-
-      // Bulk insert to database
+      // SwissDevJobsScraper now returns JobInput[] format
+      // No conversion needed, just pass directly to bulkInsertJobs
       const result = await JobScraperController.supabaseService.bulkInsertJobs(
-        jobsWithTechnologies
+        scrapedResult.jobs
       );
 
       console.log(
@@ -125,48 +107,38 @@ export class JobScraperController {
   // Get all jobs from database
   static async getJobs(req: Request, res: Response): Promise<void> {
     try {
-      const { 
-        status, 
-        company, 
-        source, 
-        priority, 
-        technology,
-        search,
-        page,
-        limit,
-        sortBy,
-        sortOrder,
-        role
-      } = req.query;
+      const { search, page, limit, sortBy, sortOrder, role } = req.query;
 
       const filters: any = {};
-      if (status) filters.status = status as string;
-      if (company) filters.company = company as string;
-      if (source) filters.source = source as string;
-      if (priority) filters.priority = priority as string;
-      if (technology) filters.technology = technology as string;
       if (search) filters.search = search as string;
       if (role) filters.role = role as string;
-      
+
       // Parse pagination parameters
       if (page) filters.page = parseInt(page as string, 10);
-      if (limit) filters.limit = parseInt(limit as string, 10);
-      
+      if (limit) filters.pageSize = parseInt(limit as string, 10);
+
       // Validate pagination parameters
       if (filters.page && (isNaN(filters.page) || filters.page < 1)) {
         filters.page = 1;
       }
-      if (filters.limit && (isNaN(filters.limit) || filters.limit < 1 || filters.limit > 100)) {
-        filters.limit = 20;
-      }
-      
-      // Sorting parameters
-      if (sortBy) filters.sortBy = sortBy as string;
-      if (sortOrder && ['asc', 'desc'].includes(sortOrder as string)) {
-        filters.sortOrder = sortOrder as 'asc' | 'desc';
+      if (
+        filters.pageSize &&
+        (isNaN(filters.pageSize) ||
+          filters.pageSize < 1 ||
+          filters.pageSize > 100)
+      ) {
+        filters.pageSize = 20;
       }
 
-      const result = await JobScraperController.supabaseService.getJobs(filters);
+      // Sorting parameters
+      if (sortBy) filters.sortBy = sortBy as string;
+      if (sortOrder && ["asc", "desc"].includes(sortOrder as string)) {
+        filters.sortOrder = sortOrder as "asc" | "desc";
+      }
+
+      const result = await JobScraperController.supabaseService.getJobs(
+        filters
+      );
 
       res.status(200).json({
         status: "success",
@@ -175,9 +147,9 @@ export class JobScraperController {
         pagination: {
           total: result.total,
           page: result.page,
-          limit: result.limit,
+          pageSize: result.pageSize,
           totalPages: result.totalPages,
-          hasMore: result.page < result.totalPages
+          hasMore: result.page < result.totalPages,
         },
         timestamp: new Date().toISOString(),
       });
@@ -381,7 +353,7 @@ export class JobScraperController {
         "https://swissdevjobs.ch/jobs/Eventfrog-AG-Senior-Software-Engineer-Angular-mwd-80-100";
 
       const filteredJobsToProcess = jobsToProcess.filter(
-        (job) => job.job_url === filteredJobUrl
+        (job: JobApplication) => job.job_url === filteredJobUrl
       );
 
       for (const job of filteredJobsToProcess) {
@@ -460,14 +432,14 @@ export class JobScraperController {
         message: `Found ${jobs.length} jobs ready for application`,
         data: {
           count: jobs.length,
-          jobs: jobs.map((job) => ({
+          jobs: jobs.map((job: any) => ({
             id: job.id,
             job_title: job.job_title,
             company: job.company,
             location: job.location,
             job_url: job.job_url,
             technologies: job.technologies,
-            scraped_at: job.scraped_at,
+            updated_at: job.updated_at,
           })),
         },
         timestamp: new Date().toISOString(),
@@ -539,7 +511,7 @@ export class JobScraperController {
   static async runArbeitnowCronJob(req: Request, res: Response): Promise<void> {
     try {
       console.log("🕘 Manually triggering Arbeitnow cron job...");
-      
+
       await JobScraperController.cronJobService.runArbeitnowScraping();
 
       res.status(200).json({
@@ -560,10 +532,13 @@ export class JobScraperController {
   }
 
   // Manual trigger for all scrapers
-  static async runAllScrapersCronJob(req: Request, res: Response): Promise<void> {
+  static async runAllScrapersCronJob(
+    req: Request,
+    res: Response
+  ): Promise<void> {
     try {
       console.log("🕘 Manually triggering all scrapers...");
-      
+
       await JobScraperController.cronJobService.runAllScrapers();
 
       res.status(200).json({
@@ -590,7 +565,8 @@ export class JobScraperController {
 
       res.status(200).json({
         status: "success",
-        message: "Daily Arbeitnow cron job started (scheduled for 9:00 AM daily)",
+        message:
+          "Daily Arbeitnow cron job started (scheduled for 9:00 AM daily)",
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
@@ -608,7 +584,11 @@ export class JobScraperController {
   // Get cron job status
   static async getCronJobStatus(req: Request, res: Response): Promise<void> {
     try {
-      const status = JobScraperController.cronJobService.getJobsStatus();
+      // CronJobService no longer tracks status - it only handles scheduling
+      const status = {
+        isRunning: true, // Always true if the server is running
+        scheduledJobs: ["Daily scraping at 7:00 AM"],
+      };
 
       res.status(200).json({
         status: "success",
@@ -631,13 +611,16 @@ export class JobScraperController {
   // Job filtering methods removed - filtering happens automatically via cron job
 
   // Analyze job categories and distribution
-  static async analyzeJobCategories(req: Request, res: Response): Promise<void> {
+  static async analyzeJobCategories(
+    req: Request,
+    res: Response
+  ): Promise<void> {
     try {
       console.log("📊 Analyzing job categories...");
-      
+
       const jobFilterService = new JobFilterService();
       const analysis = await jobFilterService.analyzeJobDistribution();
-      
+
       res.status(200).json({
         status: "success",
         message: "Job category analysis completed",
@@ -659,33 +642,34 @@ export class JobScraperController {
   static async analyzeTechnologies(req: Request, res: Response): Promise<void> {
     try {
       console.log("📊 Analyzing technologies in database...");
-      
+
       // Get all technologies
-      const technologies = await JobScraperController.supabaseService.getTechnologies();
-      
+      const technologies =
+        await JobScraperController.supabaseService.getTechnologies();
+
       // Get all jobs with their technologies
       const allJobsResult = await JobScraperController.supabaseService.getJobs({
-        limit: 10000
+        pageSize: 10000,
       });
-      
+
       // Count technology usage
       const techUsageCount: { [key: string]: number } = {};
-      allJobsResult.data.forEach(job => {
+      allJobsResult.data.forEach((job) => {
         if (job.technologies && Array.isArray(job.technologies)) {
           job.technologies.forEach((tech: any) => {
-            const techName = typeof tech === 'string' ? tech : tech.name;
+            const techName = typeof tech === "string" ? tech : tech.name;
             if (techName) {
               techUsageCount[techName] = (techUsageCount[techName] || 0) + 1;
             }
           });
         }
       });
-      
+
       // Sort technologies by usage
       const sortedTechUsage = Object.entries(techUsageCount)
         .sort(([, a], [, b]) => b - a)
         .map(([tech, count]) => ({ technology: tech, count }));
-      
+
       res.status(200).json({
         status: "success",
         message: "Technology analysis completed",
@@ -694,7 +678,7 @@ export class JobScraperController {
           totalJobs: allJobsResult.total,
           technologies: technologies,
           topUsedTechnologies: sortedTechUsage.slice(0, 50),
-          allTechnologyUsage: sortedTechUsage
+          allTechnologyUsage: sortedTechUsage,
         },
         timestamp: new Date().toISOString(),
       });

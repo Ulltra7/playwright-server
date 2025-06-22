@@ -1,42 +1,45 @@
+import { SwissDevJobsScraper } from '../scrapers/SwissDevJobsScraper';
+import { SupabaseService } from '../services/SupabaseService';
 import { chromium } from 'playwright';
-import { SupabaseService } from "../services/SupabaseService";
-import { SwissDevJobsScraper } from "../scrapers/SwissDevJobsScraper";
+import * as dotenv from 'dotenv';
 
-async function rescrapeSwissDevJobsWithDescriptions() {
-  console.log("🚀 Starting SwissDevJobs scraping with descriptions...\n");
+dotenv.config();
+
+async function rescrapeWithDescriptions() {
+  console.log('🔄 Starting SwissDevJobs rescrape with descriptions...\n');
   
-  const supabaseService = new SupabaseService();
   const scraper = new SwissDevJobsScraper();
+  const supabaseService = new SupabaseService();
   
   try {
-    // Step 1: Run the scraper to get jobs
-    const scrapingResult = await scraper.scrapeJobs();
+    // Scrape all jobs first
+    console.log('📊 Fetching all jobs from SwissDevJobs...');
+    const result = await scraper.scrapeJobs();
     
-    if (!scrapingResult.jobs || scrapingResult.jobs.length === 0) {
-      console.log("❌ No jobs found from scraper");
+    if (!result.jobs || result.jobs.length === 0) {
+      console.log('❌ No jobs found to process');
       return;
     }
     
-    const allJobs = scrapingResult.jobs;
-    console.log(`\n📊 Initial scraping complete! Found ${allJobs.length} jobs`);
+    console.log(`✅ Found ${result.jobs.length} jobs\n`);
     
-    // Step 2: Process jobs in batches to fetch descriptions
-    const batchSize = 10;
-    const browser = await chromium.launch({ headless: true });
+    // Now fetch descriptions using a separate browser instance
+    console.log('📄 Fetching detailed descriptions for all jobs...');
+    const browser = await chromium.launch({ headless: false });
     const page = await browser.newPage();
     
-    console.log(`\n📄 Fetching descriptions in batches of ${batchSize}...`);
+    const allJobs = result.jobs;
+    const batchSize = 10;
     
     for (let i = 0; i < allJobs.length; i += batchSize) {
-      const batch = allJobs.slice(i, Math.min(i + batchSize, allJobs.length));
-      console.log(`\n📦 Processing batch ${Math.floor(i/batchSize) + 1} (jobs ${i + 1}-${Math.min(i + batchSize, allJobs.length)})...`);
+      const batch = allJobs.slice(i, i + batchSize);
+      console.log(`\n📦 Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(allJobs.length/batchSize)}...`);
       
-      // Fetch descriptions for this batch
       for (const job of batch) {
         try {
-          console.log(`   Fetching: ${job.title} at ${job.company}`);
+          console.log(`   Fetching: ${job.job_title} at ${job.company}`);
           
-          await page.goto(job.url, { 
+          await page.goto(job.job_url, { 
             waitUntil: 'networkidle',
             timeout: 15000 
           });
@@ -70,8 +73,7 @@ async function rescrapeSwissDevJobsWithDescriptions() {
           });
 
           job.description = description || "No description available";
-          
-          await new Promise(resolve => setTimeout(resolve, 500)); // Small delay between requests
+          console.log(`   ✅ Got description (${job.description.length} chars)`);
           
         } catch (error) {
           console.log(`   ⚠️ Failed to fetch description: ${error}`);
@@ -82,29 +84,8 @@ async function rescrapeSwissDevJobsWithDescriptions() {
       // Save this batch to database
       console.log(`\n💾 Saving batch ${Math.floor(i/batchSize) + 1} to database...`);
       
-      const jobsWithTechnologies = batch.map(job => ({
-        job: {
-          job_title: job.title,
-          company: job.company,
-          location: job.location,
-          job_url: job.url,
-          salary: job.salary,
-          description: job.description,
-          requirements: job.requirements?.join("\n"),
-          source_id: "",
-          scraped_at: new Date(),
-          application_status: "not_applied" as const,
-          priority: "medium" as const,
-          source: { 
-            name: "swissdevjobs", 
-            display_name: "Swiss Dev Jobs",
-            base_url: "https://swissdevjobs.ch"
-          },
-        },
-        technologies: job.technologies || [],
-      }));
-
-      const insertResult = await supabaseService.bulkInsertJobs(jobsWithTechnologies);
+      // Jobs are already in JobInput format, just add descriptions
+      const insertResult = await supabaseService.bulkInsertJobs(batch);
       console.log(`   • Saved: ${insertResult.inserted}, Skipped: ${insertResult.skipped}, Errors: ${insertResult.errors.length}`);
     }
     
@@ -112,19 +93,23 @@ async function rescrapeSwissDevJobsWithDescriptions() {
     
     // Final statistics
     const jobsWithDescriptions = allJobs.filter(j => 
-      j.description && 
-      j.description !== "No description available" && 
-      j.description !== "Failed to fetch description"
+      j.description && j.description !== "Failed to fetch description"
     ).length;
     
-    console.log(`\n✅ Scraping complete!`);
-    console.log(`   • Total jobs processed: ${allJobs.length}`);
-    console.log(`   • Jobs with descriptions: ${jobsWithDescriptions}`);
-    console.log(`   • Success rate: ${Math.round(jobsWithDescriptions / allJobs.length * 100)}%`);
+    console.log(`\n🎉 Rescrape completed!`);
+    console.log(`   • Total jobs: ${allJobs.length}`);
+    console.log(`   • With descriptions: ${jobsWithDescriptions}`);
+    console.log(`   • Failed: ${allJobs.length - jobsWithDescriptions}`);
+    console.log(`\n🔍 Sample of jobs:`);
+    allJobs.slice(0, 5).forEach(job => {
+      console.log(`   • ${job.job_title} at ${job.company}`);
+      console.log(`     Description: ${job.description?.substring(0, 100)}...`);
+    });
     
   } catch (error) {
-    console.error("❌ Error:", error);
+    console.error('❌ Error during rescrape:', error);
   }
 }
 
-rescrapeSwissDevJobsWithDescriptions();
+// Run the rescrape
+rescrapeWithDescriptions().catch(console.error);

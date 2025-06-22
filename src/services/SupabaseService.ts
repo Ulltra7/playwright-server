@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import * as dotenv from "dotenv";
+import { JOB_ROLE_KEYWORDS, JobRole } from "../constants/jobRoleKeywords";
 
 // Load environment variables
 dotenv.config();
@@ -36,7 +37,7 @@ export interface Job {
   is_active?: boolean;
   created_at?: Date;
   updated_at?: Date;
-  
+
   // Populated fields (not in database)
   technologies?: Technology[];
   source?: JobSource;
@@ -70,11 +71,10 @@ export interface JobApplication extends Job {
   applied_at?: Date;
   interview_date?: Date;
   notes?: string;
-  scraped_at?: Date; // For backward compatibility
 }
 
 export class SupabaseService {
-  private supabase: SupabaseClient;
+  public readonly supabase: SupabaseClient;
 
   constructor() {
     const supabaseUrl = process.env.SUPABASE_URL;
@@ -483,7 +483,10 @@ export class SupabaseService {
 
       // Frontend tools
       { pattern: /\b(webpack|vite|rollup|parcel)\b/, relevance: 0.8 },
-      { pattern: /\b(tailwind|bootstrap|material.ui|chakra)\b/, relevance: 0.9 },
+      {
+        pattern: /\b(tailwind|bootstrap|material.ui|chakra)\b/,
+        relevance: 0.9,
+      },
       { pattern: /\b(styled.components|emotion)\b/, relevance: 0.8 },
     ];
 
@@ -510,7 +513,10 @@ export class SupabaseService {
       { pattern: /\b(docker|kubernetes|k8s)\b/, relevance: 1.0 },
       { pattern: /\b(aws|azure|gcp|google.cloud)\b/, relevance: 0.9 },
       { pattern: /\b(terraform|ansible|puppet|chef)\b/, relevance: 1.0 },
-      { pattern: /\b(jenkins|gitlab.ci|github.actions|circleci)\b/, relevance: 1.0 },
+      {
+        pattern: /\b(jenkins|gitlab.ci|github.actions|circleci)\b/,
+        relevance: 1.0,
+      },
       { pattern: /\b(prometheus|grafana|datadog|newrelic)\b/, relevance: 0.9 },
       { pattern: /\b(nginx|apache|load.balancer)\b/, relevance: 0.8 },
       { pattern: /\b(bash|shell|linux|unix)\b/, relevance: 0.7 },
@@ -532,7 +538,10 @@ export class SupabaseService {
 
     // AI/ML patterns
     const aimlPatterns = [
-      { pattern: /\b(tensorflow|pytorch|keras|scikit.learn)\b/, relevance: 1.0 },
+      {
+        pattern: /\b(tensorflow|pytorch|keras|scikit.learn)\b/,
+        relevance: 1.0,
+      },
       { pattern: /\b(machine.learning|ml|deep.learning|dl)\b/, relevance: 1.0 },
       { pattern: /\b(nlp|computer.vision|cv)\b/, relevance: 1.0 },
       { pattern: /\b(hugging.face|transformers|bert|gpt)\b/, relevance: 1.0 },
@@ -542,7 +551,10 @@ export class SupabaseService {
     // Security patterns
     const securityPatterns = [
       { pattern: /\b(security|cybersecurity|infosec)\b/, relevance: 1.0 },
-      { pattern: /\b(penetration.testing|pen.test|ethical.hacking)\b/, relevance: 1.0 },
+      {
+        pattern: /\b(penetration.testing|pen.test|ethical.hacking)\b/,
+        relevance: 1.0,
+      },
       { pattern: /\b(owasp|burp.suite|metasploit|nmap)\b/, relevance: 1.0 },
       { pattern: /\b(siem|splunk|elastic.security)\b/, relevance: 1.0 },
       { pattern: /\b(cryptography|encryption|ssl|tls)\b/, relevance: 0.9 },
@@ -550,12 +562,18 @@ export class SupabaseService {
 
     // QA patterns
     const qaPatterns = [
-      { pattern: /\b(selenium|cypress|playwright|puppeteer)\b/, relevance: 1.0 },
+      {
+        pattern: /\b(selenium|cypress|playwright|puppeteer)\b/,
+        relevance: 1.0,
+      },
       { pattern: /\b(jest|mocha|jasmine|karma)\b/, relevance: 0.9 },
       { pattern: /\b(pytest|unittest|testng|junit)\b/, relevance: 0.9 },
       { pattern: /\b(postman|insomnia|soapui)\b/, relevance: 0.8 },
       { pattern: /\b(jmeter|locust|gatling)\b/, relevance: 0.9 },
-      { pattern: /\b(qa|quality.assurance|testing|test.automation)\b/, relevance: 1.0 },
+      {
+        pattern: /\b(qa|quality.assurance|testing|test.automation)\b/,
+        relevance: 1.0,
+      },
     ];
 
     // Game dev patterns
@@ -720,19 +738,16 @@ export class SupabaseService {
   }
 
   // Get jobs with optional filtering (uses view for backward compatibility)
-  async getJobs(params: {
-    status?: string;
-    company?: string;
-    source?: string;
-    priority?: string;
-    technology?: string;
-    search?: string;
-    role?: string;
-    page?: number;
-    pageSize?: number;
-    sortBy?: string;
-    sortOrder?: "asc" | "desc";
-  } = {}): Promise<{
+  async getJobs(
+    params: {
+      search?: string;
+      role?: string;
+      page?: number;
+      pageSize?: number;
+      sortBy?: string;
+      sortOrder?: "asc" | "desc";
+    } = {}
+  ): Promise<{
     data: JobApplication[];
     total: number;
     page: number;
@@ -741,11 +756,6 @@ export class SupabaseService {
   }> {
     try {
       const {
-        status,
-        company,
-        source,
-        priority,
-        technology,
         search,
         role,
         page = 1,
@@ -754,71 +764,37 @@ export class SupabaseService {
         sortOrder = "desc",
       } = params;
 
-      // Build the base query using the view
+      // Build the base query using the jobs table
       let query = this.supabase
-        .from("job_applications_view")
-        .select("*", { count: "exact" });
+        .from("jobs")
+        .select(
+          `
+          *,
+          source:job_sources(id, name, display_name)
+        `,
+          { count: "exact" }
+        )
+        .eq("is_active", true); // Only show active jobs by default
 
-      // Apply filters
-      if (status) {
-        query = query.eq("application_status", status);
-      }
-
-      if (company) {
-        query = query.ilike("company", `%${company}%`);
-      }
-
-      if (source) {
-        // Need to join with job_sources
-        const { data: sourceData } = await this.supabase
-          .from("job_sources")
-          .select("id")
-          .eq("name", source)
-          .single();
-
-        if (sourceData) {
-          query = query.eq("source_id", sourceData.id);
-        }
-      }
-
-      if (priority) {
-        query = query.eq("priority", priority);
-      }
-
+      // Apply search filter
       if (search) {
         query = query.or(
-          `job_title.ilike.%${search}%,company.ilike.%${search}%,location.ilike.%${search}%`
+          `job_title.ilike.%${search}%,company.ilike.%${search}%,location.ilike.%${search}%,description.ilike.%${search}%`
         );
       }
 
-      // Apply role filter
-      if (role) {
-        const { data: techsForRole } = await this.supabase
-          .from("technologies")
-          .select("id")
-          .contains("job_roles", [role]);
+      // Apply role filter using keyword matching
+      if (role && role in JOB_ROLE_KEYWORDS) {
+        const roleKeywords = JOB_ROLE_KEYWORDS[role as JobRole];
 
-        if (techsForRole && techsForRole.length > 0) {
-          const techIds = techsForRole.map((t) => t.id);
-          
-          const { data: jobIdsWithRole } = await this.supabase
-            .from("job_technologies")
-            .select("job_id")
-            .in("technology_id", techIds);
+        // Build OR conditions for title keywords
+        const titleConditions = roleKeywords.titleKeywords
+          .map((keyword) => `job_title.ilike.%${keyword}%`)
+          .join(",");
 
-          if (jobIdsWithRole && jobIdsWithRole.length > 0) {
-            const jobIds = [...new Set(jobIdsWithRole.map((j) => j.job_id))];
-            query = query.in("id", jobIds);
-          } else {
-            // No jobs found for this role
-            return {
-              data: [],
-              total: 0,
-              page,
-              pageSize,
-              totalPages: 0,
-            };
-          }
+        // Apply title filter
+        if (titleConditions) {
+          query = query.or(titleConditions);
         }
       }
 
@@ -840,18 +816,19 @@ export class SupabaseService {
       // Fetch technologies for the jobs
       if (data && data.length > 0) {
         const jobIds = data.map((job) => job.id);
-        
+
         const { data: jobTechs } = await this.supabase
           .from("job_technologies")
-          .select(`
+          .select(
+            `
             job_id,
             technologies (
               id,
               name,
-              category,
-              job_roles
+              category
             )
-          `)
+          `
+          )
           .in("job_id", jobIds);
 
         // Map technologies to jobs
@@ -872,22 +849,39 @@ export class SupabaseService {
           job.technologies = techMap.get(job.id) || [];
         });
 
-        // Filter by technology if specified
+        // Additional filtering by role tech keywords if role is specified
         let filteredData = data;
-        if (technology) {
-          filteredData = data.filter((job) =>
-            job.technologies?.some((t) =>
-              t.name.toLowerCase().includes(technology.toLowerCase())
-            )
-          );
+        if (role && role in JOB_ROLE_KEYWORDS) {
+          const roleKeywords = JOB_ROLE_KEYWORDS[role as JobRole];
+
+          // Filter by matching any of the tech keywords
+          filteredData = filteredData.filter((job) => {
+            // Check if job title matches any title keyword
+            const titleLower = job.job_title.toLowerCase();
+            const titleMatch = roleKeywords.titleKeywords.some((keyword) =>
+              titleLower.includes(keyword.toLowerCase())
+            );
+
+            // Check if technologies match any tech keyword
+            const techMatch = job.technologies?.some((t: any) =>
+              roleKeywords.techKeywords.some((keyword) =>
+                t.name.toLowerCase().includes(keyword.toLowerCase())
+              )
+            );
+
+            // Job matches if either title or tech matches
+            return titleMatch || techMatch;
+          });
         }
 
         return {
           data: filteredData,
-          total: technology ? filteredData.length : (count || 0),
+          total: role ? filteredData.length : count || 0,
           page,
           pageSize,
-          totalPages: Math.ceil((technology ? filteredData.length : (count || 0)) / pageSize),
+          totalPages: Math.ceil(
+            (role ? filteredData.length : count || 0) / pageSize
+          ),
         };
       }
 
@@ -910,55 +904,96 @@ export class SupabaseService {
     }
   }
 
+  // Get jobs ready for application
+  async getJobsForApplication(): Promise<JobApplication[]> {
+    try {
+      const result = await this.getJobs({
+        pageSize: 50,
+        sortBy: "created_at",
+        sortOrder: "desc",
+      });
+
+      // Filter for jobs that have enough information to apply
+      return result.data.filter(
+        (job) => job.job_url && job.company && job.job_title && job.description
+      );
+    } catch (error) {
+      console.error("Error getting jobs for application:", error);
+      return [];
+    }
+  }
+
   // Get job statistics
   async getJobStats() {
     try {
-      const { data, error } = await this.supabase
-        .from("job_stats")
-        .select("*")
-        .single();
+      // Get total job count
+      const { count: totalCount, error: totalError } = await this.supabase
+        .from("jobs")
+        .select("*", { count: "exact", head: true });
 
-      if (error) {
-        console.error("Error fetching job stats:", error);
-        return {
-          total: 0,
-          notApplied: 0,
-          applied: 0,
-          interviews: 0,
-          offers: 0,
-          rejected: 0,
-        };
+      if (totalError) {
+        console.error("Error fetching total job count:", totalError);
+      }
+
+      // Get active job count
+      const { count: activeCount, error: activeError } = await this.supabase
+        .from("jobs")
+        .select("*", { count: "exact", head: true })
+        .eq("is_active", true);
+
+      if (activeError) {
+        console.error("Error fetching active job count:", activeError);
+      }
+
+      // Get inactive job count
+      const { count: inactiveCount, error: inactiveError } = await this.supabase
+        .from("jobs")
+        .select("*", { count: "exact", head: true })
+        .eq("is_active", false);
+
+      if (inactiveError) {
+        console.error("Error fetching inactive job count:", inactiveError);
+      }
+
+      // Get jobs with applications count
+      const { count: withApplicationsCount, error: appsError } =
+        await this.supabase
+          .from("applications")
+          .select("job_id", { count: "exact", head: true });
+
+      if (appsError) {
+        console.error("Error fetching applications count:", appsError);
       }
 
       return {
-        total: data.total_jobs || 0,
-        notApplied: data.not_applied || 0,
-        applied: data.applied || 0,
-        interviews: data.interviews || 0,
-        offers: data.offers || 0,
-        rejected: data.rejected || 0,
+        total: totalCount || 0,
+        active: activeCount || 0,
+        inactive: inactiveCount || 0,
+        withApplications: withApplicationsCount || 0,
       };
     } catch (error) {
       console.error("Error in getJobStats:", error);
       return {
         total: 0,
-        notApplied: 0,
-        applied: 0,
-        interviews: 0,
-        offers: 0,
-        rejected: 0,
+        active: 0,
+        inactive: 0,
+        withApplications: 0,
       };
     }
   }
 
   // Bulk insert jobs with the new schema
   async bulkInsertJobs(
-    jobsWithTechnologies: Array<{
-      job: Omit<Job, "id" | "created_at" | "updated_at"> & {
-        source?: { name: string; display_name?: string; base_url?: string };
-        scraped_at?: Date; // For backward compatibility
-      };
+    jobs: Array<{
+      job_title: string;
+      company: string;
+      location: string;
+      job_url: string;
+      salary?: string;
+      description?: string;
+      requirements?: string;
       technologies: string[];
+      source: { name: string; display_name?: string; base_url?: string };
     }>
   ): Promise<{
     inserted: number;
@@ -973,14 +1008,10 @@ export class SupabaseService {
       errors: [] as string[],
     };
 
-    for (const { job, technologies } of jobsWithTechnologies) {
+    for (const job of jobs) {
       try {
         // Get or create source
-        let sourceId = job.source_id;
-        if (!sourceId && job.source?.name) {
-          sourceId = await this.getOrCreateJobSource(job.source.name);
-        }
-
+        const sourceId = await this.getOrCreateJobSource(job.source.name);
         if (!sourceId) {
           results.errors.push(
             `Failed to get source for job ${job.job_title}: No source provided`
@@ -996,13 +1027,15 @@ export class SupabaseService {
           .single();
 
         if (existingJob) {
-          // Update the existing job's updated_at timestamp
+          // Update the existing job's updated_at timestamp and category if provided
+          const updateData: any = {
+            updated_at: new Date().toISOString(),
+            is_active: true, // Mark as active since we just saw it
+          };
+
           const { error: updateError } = await this.supabase
             .from("jobs")
-            .update({ 
-              updated_at: new Date().toISOString(),
-              is_active: true  // Mark as active since we just saw it
-            })
+            .update(updateData)
             .eq("id", existingJob.id);
 
           if (updateError) {
@@ -1028,7 +1061,7 @@ export class SupabaseService {
             source_id: sourceId,
             is_active: true,
           },
-          technologies
+          job.technologies
         );
 
         if (result.success) {
@@ -1071,7 +1104,7 @@ export class SupabaseService {
       // Link technologies
       if (technologies.length > 0) {
         const techLinks = [];
-        
+
         for (const techName of technologies) {
           const techId = await this.getOrCreateTechnology(techName);
           if (techId) {
@@ -1138,10 +1171,12 @@ export class SupabaseService {
       if (updates.requirements) jobFields.requirements = updates.requirements;
 
       // Application fields
-      if (updates.application_status) appFields.application_status = updates.application_status;
+      if (updates.application_status)
+        appFields.application_status = updates.application_status;
       if (updates.priority) appFields.priority = updates.priority;
       if (updates.applied_at) appFields.applied_at = updates.applied_at;
-      if (updates.interview_date) appFields.interview_date = updates.interview_date;
+      if (updates.interview_date)
+        appFields.interview_date = updates.interview_date;
       if (updates.notes) appFields.notes = updates.notes;
 
       // Update job if needed
@@ -1217,7 +1252,10 @@ export class SupabaseService {
   }
 
   // Mark jobs as inactive after scraping
-  async markInactiveJobs(sourceId: string, activeJobUrls: string[]): Promise<number> {
+  async markInactiveJobs(
+    sourceId: string,
+    activeJobUrls: string[]
+  ): Promise<number> {
     try {
       if (activeJobUrls.length === 0) {
         console.log("No active job URLs provided, skipping inactive marking");
@@ -1230,7 +1268,11 @@ export class SupabaseService {
         .update({ is_active: false })
         .eq("source_id", sourceId)
         .eq("is_active", true)
-        .not("job_url", "in", `(${activeJobUrls.map(url => `"${url}"`).join(",")})`)
+        .not(
+          "job_url",
+          "in",
+          `(${activeJobUrls.map((url) => `"${url}"`).join(",")})`
+        )
         .select();
 
       if (error) {
@@ -1302,18 +1344,22 @@ export class SupabaseService {
       // Fetch technologies
       const { data: jobTechs } = await this.supabase
         .from("job_technologies")
-        .select(`
+        .select(
+          `
           technologies (
             id,
             name,
             category,
             job_roles
           )
-        `)
+        `
+        )
         .eq("job_id", jobId);
 
       if (jobTechs) {
-        data.technologies = jobTechs.map((jt: any) => jt.technologies).filter(Boolean);
+        data.technologies = jobTechs
+          .map((jt: any) => jt.technologies)
+          .filter(Boolean);
       }
 
       return data;

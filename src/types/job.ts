@@ -9,7 +9,7 @@ export interface JobListing {
   salary?: string;
   url: string;
   postedDate?: Date;
-  scraped_at: Date;
+  updated_at: Date;
 }
 
 export interface ScraperResponse<T = any> {

@@ -1,9 +1,7 @@
 import { SupabaseService, JobApplication } from "./SupabaseService";
-import { JobCategorizer, JobCategory } from "./JobCategorizer";
 
 export class JobFilterService {
   private supabaseService: SupabaseService;
-  private jobCategorizer: JobCategorizer;
 
   // Keywords that indicate IT/Tech jobs (inclusive)
   private readonly IT_KEYWORDS = [
@@ -139,7 +137,6 @@ export class JobFilterService {
 
   constructor() {
     this.supabaseService = new SupabaseService();
-    this.jobCategorizer = new JobCategorizer();
   }
 
   /**
@@ -213,15 +210,14 @@ export class JobFilterService {
     totalJobs: number;
     itJobs: number;
     removedJobs: number;
-    removedJobsList: Array<{ title: string; company: string; reason: string; category: JobCategory }>;
-    jobsByCategory: Record<JobCategory, number>;
+    removedJobsList: Array<{ title: string; company: string; reason: string }>;
   }> {
     try {
       console.log("🔍 Starting IT job filtering process...");
       
       // Fetch all jobs
       const allJobsResult = await this.supabaseService.getJobs({
-        limit: 10000 // High limit to get all jobs
+        pageSize: 10000 // High limit to get all jobs
       });
       
       const allJobs = allJobsResult.data;
@@ -230,38 +226,25 @@ export class JobFilterService {
       console.log(`📊 Total jobs to analyze: ${totalJobs}`);
       
       const jobsToRemove: JobApplication[] = [];
-      const removedJobsList: Array<{ title: string; company: string; reason: string; category: JobCategory }> = [];
-      const jobsByCategory: Record<JobCategory, number> = {} as Record<JobCategory, number>;
-      
-      // Initialize category counts
-      const categories: JobCategory[] = ['frontend_developer', 'backend_developer', 'fullstack_developer', 
-        'ai_engineer', 'data_scientist', 'it_manager', 'designer', 'devops_engineer', 
-        'mobile_developer', 'qa_engineer', 'other_it', 'non_it'];
-      categories.forEach(cat => jobsByCategory[cat] = 0);
+      const removedJobsList: Array<{ title: string; company: string; reason: string }> = [];
       
       // Analyze each job
       for (const job of allJobs) {
-        // Categorize the job
         const technologies = (job.technologies || []).map((tech: any) => {
           if (typeof tech === 'string') return tech;
           if (tech && typeof tech === 'object' && tech.name) return tech.name;
           return null;
         }).filter((tech: string | null): tech is string => tech !== null);
         
-        const categorization = this.jobCategorizer.categorizeJob(
-          job.job_title,
-          job.description || '',
-          technologies
-        );
+        // Check if it's an IT job
+        const isIT = this.isITJob(job);
         
-        jobsByCategory[categorization.category]++;
-        
-        // If it's non-IT, add to removal list
-        if (categorization.category === 'non_it') {
+        // If it's not IT, add to removal list
+        if (!isIT) {
           jobsToRemove.push(job);
           
           // Determine specific reason
-          let reason = "Categorized as non-IT job";
+          let reason = "Not an IT job";
           const titleLower = job.job_title.toLowerCase();
           const descriptionLower = (job.description || '').toLowerCase();
           
@@ -274,7 +257,7 @@ export class JobFilterService {
           }
           
           // If not found in titles, check for exclusion keywords
-          if (reason === "Categorized as non-IT job") {
+          if (reason === "Not an IT job") {
             for (const excludeKeyword of this.EXCLUDE_KEYWORDS) {
               if (titleLower.includes(excludeKeyword) || descriptionLower.includes(excludeKeyword)) {
                 reason = `Non-IT job containing: "${excludeKeyword}"`;
@@ -286,8 +269,7 @@ export class JobFilterService {
           removedJobsList.push({
             title: job.job_title,
             company: job.company,
-            reason,
-            category: categorization.category
+            reason
           });
         }
       }
@@ -306,17 +288,10 @@ export class JobFilterService {
         totalJobs,
         itJobs: totalJobs - jobsToRemove.length,
         removedJobs: jobsToRemove.length,
-        removedJobsList: removedJobsList.slice(0, 20), // Limit to first 20 for logging
-        jobsByCategory
+        removedJobsList: removedJobsList.slice(0, 20) // Limit to first 20 for logging
       };
       
       console.log(`✅ Filtering complete! Kept ${results.itJobs} IT jobs, removed ${results.removedJobs} non-IT jobs`);
-      console.log(`📊 Jobs by category:`);
-      Object.entries(jobsByCategory).forEach(([category, count]) => {
-        if (count > 0) {
-          console.log(`   • ${this.jobCategorizer.getCategoryDisplayName(category as JobCategory)}: ${count}`);
-        }
-      });
       
       return results;
     } catch (error) {
@@ -332,27 +307,19 @@ export class JobFilterService {
     totalJobs: number;
     likelyITJobs: number;
     likelyNonITJobs: number;
-    jobsByCategory: Record<JobCategory, number>;
     examples: {
-      itJobs: Array<{ title: string; company: string; category: JobCategory }>;
-      nonITJobs: Array<{ title: string; company: string; category: JobCategory }>;
+      itJobs: Array<{ title: string; company: string }>;
+      nonITJobs: Array<{ title: string; company: string }>;
     };
   }> {
     try {
       const allJobsResult = await this.supabaseService.getJobs({
-        limit: 10000
+        pageSize: 10000
       });
       
       const allJobs = allJobsResult.data;
-      const itJobs: Array<JobApplication & { category: JobCategory }> = [];
-      const nonITJobs: Array<JobApplication & { category: JobCategory }> = [];
-      const jobsByCategory: Record<JobCategory, number> = {} as Record<JobCategory, number>;
-      
-      // Initialize category counts
-      const categories: JobCategory[] = ['frontend_developer', 'backend_developer', 'fullstack_developer', 
-        'ai_engineer', 'data_scientist', 'it_manager', 'designer', 'devops_engineer', 
-        'mobile_developer', 'qa_engineer', 'other_it', 'non_it'];
-      categories.forEach(cat => jobsByCategory[cat] = 0);
+      const itJobs: JobApplication[] = [];
+      const nonITJobs: JobApplication[] = [];
       
       for (const job of allJobs) {
         const technologies = (job.technologies || []).map((tech: any) => {
@@ -361,20 +328,12 @@ export class JobFilterService {
           return null;
         }).filter((tech: string | null): tech is string => tech !== null);
         
-        const categorization = this.jobCategorizer.categorizeJob(
-          job.job_title,
-          job.description || '',
-          technologies
-        );
+        const isIT = this.isITJob(job);
         
-        jobsByCategory[categorization.category]++;
-        
-        const jobWithCategory = { ...job, category: categorization.category };
-        
-        if (categorization.category === 'non_it') {
-          nonITJobs.push(jobWithCategory);
+        if (isIT) {
+          itJobs.push(job);
         } else {
-          itJobs.push(jobWithCategory);
+          nonITJobs.push(job);
         }
       }
       
@@ -382,17 +341,14 @@ export class JobFilterService {
         totalJobs: allJobs.length,
         likelyITJobs: itJobs.length,
         likelyNonITJobs: nonITJobs.length,
-        jobsByCategory,
         examples: {
           itJobs: itJobs.slice(0, 5).map(j => ({ 
             title: j.job_title, 
-            company: j.company,
-            category: j.category
+            company: j.company
           })),
           nonITJobs: nonITJobs.slice(0, 5).map(j => ({ 
             title: j.job_title, 
-            company: j.company,
-            category: j.category
+            company: j.company
           }))
         }
       };

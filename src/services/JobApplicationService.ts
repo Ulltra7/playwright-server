@@ -1,4 +1,4 @@
-import { JobScraper } from "./JobScraper";
+import { JobScraper } from "../scrapers/JobScraper";
 import { JobApplication } from "./SupabaseService";
 
 export interface JobApplicationResult {

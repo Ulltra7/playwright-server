@@ -15,17 +15,10 @@ async function main() {
     console.log(`   IT jobs: ${analysis.likelyITJobs}`);
     console.log(`   Non-IT jobs: ${analysis.likelyNonITJobs}`);
     
-    console.log(`\n📊 Jobs by category:`);
-    Object.entries(analysis.jobsByCategory).forEach(([category, count]) => {
-      if (count > 0) {
-        console.log(`   • ${category}: ${count}`);
-      }
-    });
-    
     if (analysis.examples.nonITJobs.length > 0) {
       console.log(`\n🚫 Examples of non-IT jobs to be removed:`);
       analysis.examples.nonITJobs.forEach(job => {
-        console.log(`   • ${job.title} at ${job.company} (${job.category})`);
+        console.log(`   • ${job.title} at ${job.company}`);
       });
     }
     
