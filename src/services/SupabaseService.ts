@@ -907,14 +907,40 @@ export class SupabaseService {
   // Get jobs ready for application
   async getJobsForApplication(): Promise<JobApplication[]> {
     try {
+      // For testing, prioritize SwissDevJobs
+      const { data: swissDevJobs, error: swissError } = await this.supabase
+        .from("jobs")
+        .select(`
+          *,
+          source:job_sources(id, name, display_name)
+        `)
+        .eq("is_active", true)
+        .like("job_url", "%swissdevjobs%")
+        .limit(50);
+
+      if (swissError) {
+        console.error("Error fetching SwissDevJobs:", swissError);
+      }
+
+      // Get other recent jobs
       const result = await this.getJobs({
-        pageSize: 50,
+        pageSize: 150,
         sortBy: "created_at",
         sortOrder: "desc",
       });
 
+      // Combine SwissDevJobs with other jobs (removing duplicates)
+      const allJobs = [...(swissDevJobs || [])];
+      const swissDevJobIds = new Set(allJobs.map(job => job.id));
+      
+      for (const job of result.data) {
+        if (!swissDevJobIds.has(job.id)) {
+          allJobs.push(job);
+        }
+      }
+
       // Filter for jobs that have enough information to apply
-      return result.data.filter(
+      return allJobs.filter(
         (job) => job.job_url && job.company && job.job_title && job.description
       );
     } catch (error) {

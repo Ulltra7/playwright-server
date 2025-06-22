@@ -1,40 +1,34 @@
-import { JobScraper } from "../scrapers/JobScraper";
-import { JobApplication } from "./SupabaseService";
+import { chromium, Browser, Page } from "playwright";
+import { BROWSER_CONFIG } from "../constants/urls";
+import { applicantConfig } from "../config/applicant.config";
+import { JobApplication, SupabaseService } from "./SupabaseService";
+import * as path from "path";
+import * as fs from "fs";
 
 export interface JobApplicationResult {
   jobId: string;
   jobTitle: string;
   company: string;
   success: boolean;
-  status: "form_filled" | "external_link" | "no_apply_button" | "error";
+  status: "form_filled" | "form_submitted" | "already_applied" | "no_form" | "error";
   message: string;
-  formData?: {
-    name?: string;
-    email?: string;
-    phone?: string;
-    coverLetter?: string;
-  };
+  formData?: Record<string, string>;
   error?: string;
 }
 
-export class JobApplicationService extends JobScraper {
-  private readonly APPLICATION_CONFIG = {
-    name: "John Doe", // Replace with actual name
-    email: "john.doe@example.com", // Replace with actual email
-    phone: "+41 XX XXX XX XX", // Replace with actual phone
-    coverLetter: `Dear Hiring Manager,
+export class JobApplicationService {
+  private browser: Browser | null = null;
+  private page: Page | null = null;
+  private supabaseService: SupabaseService;
+  private currentJobId: string = "";
 
-I am writing to express my interest in this position. As an experienced developer with expertise in modern web technologies including Node.js, React, TypeScript, and Python, I am excited about the opportunity to contribute to your team.
-
-I have a strong background in full-stack development and am passionate about creating efficient, scalable solutions. I would welcome the opportunity to discuss how my skills and experience can benefit your organization.
-
-Thank you for your consideration.
-
-Best regards,
-John Doe`,
-  };
+  constructor() {
+    this.supabaseService = new SupabaseService();
+  }
 
   async applyToJob(job: JobApplication): Promise<JobApplicationResult> {
+    this.currentJobId = job.id || "";
+    
     const result: JobApplicationResult = {
       jobId: job.id || "",
       jobTitle: job.job_title,
@@ -45,100 +39,87 @@ John Doe`,
     };
 
     try {
-      console.log(
-        `🎯 Starting application process for: ${job.job_title} at ${job.company}`
-      );
+      console.log(`\n🎯 Processing: ${job.job_title} at ${job.company}`);
 
+      // Initialize browser
       await this.initBrowser();
       await this.navigateToUrl(job.job_url);
 
       // Wait for page to load
-      await this.page?.waitForTimeout(2000);
+      await this.page!.waitForTimeout(2000);
 
-      // Look for the apply button
-      const applyButtonResult = await this.findAndClickApplyButton();
+      // Check if this is a SwissDevJobs URL
+      if (job.job_url.includes("swissdevjobs")) {
+        console.log("🇨🇭 Detected SwissDevJobs URL, using specific handler");
+        const swissResult = await this.handleSwissDevJobsApplication();
 
-      if (!applyButtonResult.found) {
-        result.status = "no_apply_button";
-        result.message = "No apply button found on the page";
-        await this.closeBrowser();
-        return result;
-      }
-
-      if (applyButtonResult.isExternalLink) {
-        result.status = "external_link";
-        result.message = `Apply button leads to external site: ${applyButtonResult.externalUrl}`;
-        await this.closeBrowser();
-        return result;
-      }
-
-      // If we reach here, the apply button was clicked and should open a form
-      console.log("✅ Apply button clicked, looking for application form...");
-
-      // Wait for potential form to appear
-      await this.page?.waitForTimeout(3000);
-
-      // Try to fill the application form
-      const formResult = await this.fillApplicationForm();
-
-      if (formResult.success) {
-        result.success = true;
-        result.status = "form_filled";
-        result.message = "Application form filled successfully (not submitted)";
-        result.formData = formResult.formData;
+        if (swissResult.success) {
+          result.success = true;
+          result.status = "form_filled";
+          result.message =
+            swissResult.message || "SwissDevJobs form filled successfully";
+          result.formData = swissResult.formData;
+        } else {
+          result.status = "no_form";
+          result.message =
+            swissResult.message || "Failed to fill SwissDevJobs form";
+        }
       } else {
-        result.status = "error";
-        result.message =
-          formResult.message || "Failed to fill application form";
+        // Generic form filling for other sites
+        const formResult = await this.fillApplicationForm();
+
+        if (formResult.success) {
+          result.success = true;
+          result.status = "form_filled";
+          result.message = "Application form filled successfully";
+          result.formData = formResult.formData;
+          console.log("✅ Form filled successfully");
+        } else {
+          result.status = "no_form";
+          result.message = "No application form found on page";
+          console.log("❌ No form found");
+        }
       }
+
+      // Take screenshot for debugging
+      await this.takeScreenshot(`application-${job.company}-${Date.now()}.png`);
     } catch (error) {
-      console.error(`❌ Error applying to job ${job.job_title}:`, error);
+      console.error(`❌ Error applying to job:`, error);
       result.error = error instanceof Error ? error.message : String(error);
-      result.message = `Error during application process: ${result.error}`;
+      result.message = `Error: ${result.error}`;
     } finally {
-      // wait 5 seconds before closing the browser
-      await this.page?.waitForTimeout(5000);
       await this.closeBrowser();
     }
 
     return result;
   }
 
-  private async findAndClickApplyButton(): Promise<{
-    found: boolean;
-    isExternalLink: boolean;
-    externalUrl?: string;
+  private async handleSwissDevJobsApplication(): Promise<{
+    success: boolean;
+    message?: string;
+    formData?: Record<string, string>;
   }> {
     if (!this.page) {
-      return { found: false, isExternalLink: false };
+      return { success: false, message: "Browser not initialized" };
     }
 
     try {
-      // Look for apply button with various selectors
-      const applySelectors = [
-        'button[title="Apply for this job"]',
-        'button:has-text("APPLY")',
-        'a[title="Apply for this job"]',
-        'a:has-text("APPLY")',
-        'button:has-text("Apply")',
-        'a:has-text("Apply")',
-        '[data-testid*="apply"]',
-        ".apply-button",
-        "#apply-button",
-        'button[class*="apply"]',
-        'a[class*="apply"]',
+      // First, look for and click the "Bewerben" button
+      const applyButtonSelectors = [
+        'button:has-text("BEWERBEN")',
+        'button:has-text("Bewerben")',
+        "button.job-apply-button",
+        'button[aria-label*="Bewerben"]',
       ];
 
-      let applyElement = null;
-      let usedSelector = "";
-
-      // Try each selector
-      for (const selector of applySelectors) {
+      let buttonClicked = false;
+      for (const selector of applyButtonSelectors) {
         try {
-          applyElement = await this.page.$(selector);
-          if (applyElement) {
-            usedSelector = selector;
-            console.log(`🎯 Found apply button with selector: ${selector}`);
+          const button = await this.page.$(selector);
+          if (button && (await button.isVisible())) {
+            await button.click();
+            console.log("  ✓ Clicked Bewerben button");
+            buttonClicked = true;
             break;
           }
         } catch (error) {
@@ -146,121 +127,254 @@ John Doe`,
         }
       }
 
-      if (!applyElement) {
-        console.log("❌ No apply button found with any selector");
-        return { found: false, isExternalLink: false };
+      if (!buttonClicked) {
+        console.log(
+          "  ℹ️  No Bewerben button found, checking if form is already visible"
+        );
       }
 
-      // Check if it's a link (a tag) and get the href
-      const tagName = await applyElement.evaluate((el) =>
-        el.tagName.toLowerCase()
-      );
+      // Wait for form to appear
+      await this.page.waitForTimeout(2000);
 
-      if (tagName === "a") {
-        const href = await applyElement.getAttribute("href");
+      // Now fill the SwissDevJobs specific form
+      const formData: Record<string, string> = {};
+      let fieldsFound = 0;
 
-        if (href) {
-          // Check if it's an external link
-          const currentDomain = new URL(this.page.url()).hostname;
+      // Fill name field (Vor- und Nachname)
+      const nameInput = await this.page.$('input[name="name"]');
+      if (nameInput && (await nameInput.isVisible())) {
+        await nameInput.fill(
+          `${applicantConfig.firstName} ${applicantConfig.lastName}`
+        );
+        formData[
+          "name"
+        ] = `${applicantConfig.firstName} ${applicantConfig.lastName}`;
+        fieldsFound++;
+        console.log("  ✓ Filled name field");
+      }
 
-          try {
-            const linkUrl = new URL(href, this.page.url());
-            if (linkUrl.hostname !== currentDomain) {
-              console.log(
-                `🔗 Apply button is external link to: ${linkUrl.href}`
-              );
-              return {
-                found: true,
-                isExternalLink: true,
-                externalUrl: linkUrl.href,
-              };
-            }
-          } catch (error) {
-            // If URL parsing fails, treat as relative link
-          }
+      // Fill email field
+      const emailInput = await this.page.$('input[name="email"]');
+      if (emailInput && (await emailInput.isVisible())) {
+        await emailInput.fill(applicantConfig.email);
+        formData["email"] = applicantConfig.email;
+        fieldsFound++;
+        console.log("  ✓ Filled email field");
+      }
+
+      // Select EU citizen radio button (Yes)
+      const euYesRadio = await this.page.$("input#YesEurope");
+      if (euYesRadio && (await euYesRadio.isVisible())) {
+        await euYesRadio.click();
+        formData["isFromEurope"] = "Yes";
+        fieldsFound++;
+        console.log("  ✓ Selected EU citizen: Yes");
+      }
+
+      // Upload CV
+      const cvInput = await this.page.$('input[name="cvFile"]');
+      if (cvInput && (await cvInput.isVisible())) {
+        const cvPath = path.join(process.cwd(), applicantConfig.cvPath);
+        if (fs.existsSync(cvPath)) {
+          await cvInput.setInputFiles(cvPath);
+          formData["cv"] = "CV.pdf uploaded";
+          fieldsFound++;
+          console.log("  ✓ CV uploaded");
+        } else {
+          console.log("  ⚠️  CV file not found at:", cvPath);
         }
       }
 
-      // Click the apply button
-      await applyElement.click();
-      console.log("✅ Apply button clicked successfully");
+      // Fill motivation letter
+      const motivationTextarea = await this.page.$(
+        'textarea[name="motivationLetter"]'
+      );
+      if (motivationTextarea && (await motivationTextarea.isVisible())) {
+        // Create a personalized cover letter
+        const personalizedCoverLetter = applicantConfig.coverLetterString
+          .replace("[Company Name]", "Ihr Unternehmen")
+          .trim();
 
-      return { found: true, isExternalLink: false };
+        await motivationTextarea.fill(personalizedCoverLetter);
+        formData["motivationLetter"] = "Cover letter filled";
+        fieldsFound++;
+        console.log("  ✓ Filled motivation letter");
+      }
+
+      // Uncheck newsletter checkbox if it's checked
+      const newsletterCheckbox = await this.page.$(
+        'input[name="wantsNewsletter"]'
+      );
+      if (newsletterCheckbox && (await newsletterCheckbox.isVisible())) {
+        const isChecked = await newsletterCheckbox.isChecked();
+        if (isChecked) {
+          await newsletterCheckbox.uncheck();
+          console.log("  ✓ Unchecked newsletter");
+        }
+      }
+
+      if (fieldsFound === 0) {
+        return {
+          success: false,
+          message: "No SwissDevJobs form fields found",
+        };
+      }
+
+      console.log(`  ✓ SwissDevJobs form filled with ${fieldsFound} fields`);
+
+      // Submit the form
+      const submitButton = await this.page.$('button[type="submit"]');
+      if (submitButton && await submitButton.isVisible()) {
+        console.log("  ℹ️  Submit button found, preparing to submit...");
+        
+        // Update database BEFORE submitting
+        await this.updateApplicationStatus(this.currentJobId, "applied");
+        console.log("  ✓ Updated application status in database");
+        
+        // Now submit the form
+        await submitButton.click();
+        console.log("  ✓ Clicked submit button");
+        
+        // Wait for submission to process
+        await this.page.waitForTimeout(3000);
+        
+        // Check for success indicators
+        const successMessage = await this.page.$('text=/erfolgreich|gesendet|danke/i');
+        if (successMessage) {
+          console.log("  ✅ Application submitted successfully!");
+          return {
+            success: true,
+            message: `SwissDevJobs form submitted successfully with ${fieldsFound} fields`,
+            formData,
+          };
+        }
+      } else {
+        console.log("  ⚠️  Submit button not found");
+      }
+
+      return {
+        success: true,
+        message: `SwissDevJobs form filled with ${fieldsFound} fields and submitted`,
+        formData,
+      };
     } catch (error) {
-      console.error("❌ Error finding/clicking apply button:", error);
-      return { found: false, isExternalLink: false };
+      return {
+        success: false,
+        message: `Error filling SwissDevJobs form: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
     }
   }
 
   private async fillApplicationForm(): Promise<{
     success: boolean;
     message?: string;
-    formData?: any;
+    formData?: Record<string, string>;
   }> {
     if (!this.page) {
       return { success: false, message: "Browser not initialized" };
     }
 
     try {
-      // Wait for potential modal or form to appear
-      await this.page.waitForTimeout(2000);
+      const formData: Record<string, string> = {};
+      let fieldsFound = 0;
 
-      const formData: any = {};
-
-      // Look for common form fields and fill them
+      // Field mappings with multiple possible selectors
       const fieldMappings = [
         {
           selectors: [
-            'input[name*="name"]',
-            'input[placeholder*="name"]',
-            'input[id*="name"]',
+            'input[name*="first"]',
+            'input[name*="fname"]',
+            'input[name*="firstName"]',
+            'input[placeholder*="First"]',
+            'input[id*="first"]',
           ],
-          value: this.APPLICATION_CONFIG.name,
-          field: "name",
+          value: applicantConfig.firstName,
+          field: "firstName",
         },
         {
           selectors: [
+            'input[name*="last"]',
+            'input[name*="lname"]',
+            'input[name*="lastName"]',
+            'input[placeholder*="Last"]',
+            'input[id*="last"]',
+          ],
+          value: applicantConfig.lastName,
+          field: "lastName",
+        },
+        {
+          selectors: [
+            'input[name*="name"]:not([name*="first"]):not([name*="last"])',
+            'input[placeholder*="Full name"]',
+            'input[placeholder*="Name"]',
+            'input[id="name"]',
+          ],
+          value: applicantConfig.fullName,
+          field: "fullName",
+        },
+        {
+          selectors: [
+            'input[type="email"]',
             'input[name*="email"]',
             'input[placeholder*="email"]',
             'input[id*="email"]',
-            'input[type="email"]',
           ],
-          value: this.APPLICATION_CONFIG.email,
+          value: applicantConfig.email,
           field: "email",
         },
         {
           selectors: [
-            'input[name*="phone"]',
-            'input[placeholder*="phone"]',
-            'input[id*="phone"]',
             'input[type="tel"]',
+            'input[name*="phone"]',
+            'input[name*="tel"]',
+            'input[placeholder*="phone"]',
+            'input[placeholder*="Phone"]',
+            'input[id*="phone"]',
           ],
-          value: this.APPLICATION_CONFIG.phone,
+          value: applicantConfig.phoneNumber,
           field: "phone",
         },
         {
           selectors: [
-            'textarea[name*="cover"]',
-            'textarea[placeholder*="cover"]',
-            'textarea[name*="letter"]',
-            'textarea[placeholder*="letter"]',
-            'textarea[name*="message"]',
+            'input[name*="linkedin"]',
+            'input[placeholder*="LinkedIn"]',
+            'input[id*="linkedin"]',
           ],
-          value: this.APPLICATION_CONFIG.coverLetter,
-          field: "coverLetter",
+          value: applicantConfig.linkedIn || "",
+          field: "linkedIn",
+        },
+        {
+          selectors: [
+            'input[name*="github"]',
+            'input[placeholder*="GitHub"]',
+            'input[id*="github"]',
+          ],
+          value: applicantConfig.github || "",
+          field: "github",
+        },
+        {
+          selectors: [
+            'input[name*="portfolio"]',
+            'input[name*="website"]',
+            'input[placeholder*="Portfolio"]',
+            'input[placeholder*="Website"]',
+            'input[id*="portfolio"]',
+          ],
+          value: applicantConfig.portfolio || "",
+          field: "portfolio",
         },
       ];
 
-      let fieldsFound = 0;
-
+      // Try to fill each field
       for (const mapping of fieldMappings) {
-        let fieldFound = false;
+        if (!mapping.value) continue;
 
         for (const selector of mapping.selectors) {
           try {
             const element = await this.page.$(selector);
             if (element) {
-              // Check if the element is visible and enabled
               const isVisible = await element.isVisible();
               const isEnabled = await element.isEnabled();
 
@@ -268,10 +382,7 @@ John Doe`,
                 await element.fill(mapping.value);
                 formData[mapping.field] = mapping.value;
                 fieldsFound++;
-                fieldFound = true;
-                console.log(
-                  `✅ Filled ${mapping.field} field with selector: ${selector}`
-                );
+                console.log(`  ✓ Filled ${mapping.field}`);
                 break;
               }
             }
@@ -279,42 +390,141 @@ John Doe`,
             // Continue to next selector
           }
         }
+      }
 
-        if (!fieldFound) {
-          console.log(`⚠️ Could not find field: ${mapping.field}`);
-        }
+      // Try to attach CV if file upload is present
+      const cvAttached = await this.attachCV();
+      if (cvAttached) {
+        fieldsFound++;
+        formData["cv"] = "CV.pdf attached";
       }
 
       if (fieldsFound === 0) {
         return {
           success: false,
-          message: "No form fields found or form not visible",
+          message: "No form fields found on page",
         };
       }
 
-      console.log(`✅ Successfully filled ${fieldsFound} form fields`);
-
-      // Take a screenshot for debugging
-      await this.takeScreenshot(`application-form-${Date.now()}.png`);
-
+      console.log(`  ✓ Filled ${fieldsFound} fields`);
       return {
         success: true,
-        message: `Form filled with ${fieldsFound} fields. Ready for manual submission.`,
+        message: `Filled ${fieldsFound} fields`,
         formData,
       };
     } catch (error) {
-      console.error("❌ Error filling application form:", error);
       return {
         success: false,
-        message: `Error filling form: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        message: error instanceof Error ? error.message : String(error),
       };
     }
   }
 
-  // Override the abstract method from JobScraper (not used in this context)
-  async scrapeJobs(): Promise<any> {
-    throw new Error("JobApplicationService is not for scraping jobs");
+  private async attachCV(): Promise<boolean> {
+    if (!this.page) return false;
+
+    try {
+      // Look for file input fields
+      const fileInputSelectors = [
+        'input[type="file"]',
+        'input[name*="cv"]',
+        'input[name*="resume"]',
+        'input[name*="CV"]',
+        'input[name*="Resume"]',
+        'input[accept*="pdf"]',
+      ];
+
+      for (const selector of fileInputSelectors) {
+        try {
+          const fileInput = await this.page.$(selector);
+          if (fileInput) {
+            const isVisible = await fileInput.isVisible();
+            if (isVisible) {
+              // Get CV path
+              const cvPath = path.join(process.cwd(), applicantConfig.cvPath);
+
+              // Check if CV exists
+              if (fs.existsSync(cvPath)) {
+                await fileInput.setInputFiles(cvPath);
+                console.log("  ✓ CV attached");
+                return true;
+              } else {
+                console.log("  ⚠️  CV file not found at:", cvPath);
+              }
+            }
+          }
+        } catch (error) {
+          // Continue to next selector
+        }
+      }
+    } catch (error) {
+      console.error("  ❌ Error attaching CV:", error);
+    }
+
+    return false;
+  }
+
+  private async initBrowser(): Promise<void> {
+    this.browser = await chromium.launch({
+      headless: BROWSER_CONFIG.HEADLESS,
+      args: BROWSER_CONFIG.ARGS,
+    });
+    this.page = await this.browser.newPage();
+  }
+
+  private async navigateToUrl(url: string): Promise<void> {
+    if (!this.page) {
+      throw new Error("Browser not initialized");
+    }
+
+    await this.page.goto(url, {
+      waitUntil: "networkidle",
+      timeout: BROWSER_CONFIG.TIMEOUT,
+    });
+  }
+
+  private async takeScreenshot(filename: string): Promise<void> {
+    if (!this.page) return;
+
+    try {
+      await this.page.screenshot({
+        path: `screenshots/${filename}`,
+        fullPage: true,
+      });
+    } catch (error) {
+      console.error("Error taking screenshot:", error);
+    }
+  }
+
+  private async closeBrowser(): Promise<void> {
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
+      this.page = null;
+    }
+  }
+
+  private async updateApplicationStatus(
+    jobId: string,
+    status: "applied" | "rejected" | "interview_scheduled"
+  ): Promise<void> {
+    try {
+      const { error } = await this.supabaseService.supabase
+        .from("applications")
+        .upsert({
+          job_id: jobId,
+          application_status: status,
+          applied_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          priority: "medium",
+          notes: `Applied via automated system on ${new Date().toLocaleString()}`
+        });
+
+      if (error) {
+        console.error("  ❌ Error updating application status:", error);
+      }
+    } catch (error) {
+      console.error("  ❌ Error in updateApplicationStatus:", error);
+    }
   }
 }

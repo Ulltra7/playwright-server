@@ -348,15 +348,7 @@ export class JobScraperController {
         `🎯 Processing ${jobsToProcess.length} jobs (limited to ${maxJobs})`
       );
 
-      // for testing, filter for only one specific job
-      const filteredJobUrl =
-        "https://swissdevjobs.ch/jobs/Eventfrog-AG-Senior-Software-Engineer-Angular-mwd-80-100";
-
-      const filteredJobsToProcess = jobsToProcess.filter(
-        (job: JobApplication) => job.job_url === filteredJobUrl
-      );
-
-      for (const job of filteredJobsToProcess) {
+      for (const job of jobsToProcess) {
         try {
           console.log(`\n📝 Processing: ${job.job_title} at ${job.company}`);
 
