@@ -63,12 +63,22 @@ export class CronJobService {
       // Insert jobs into database
       const insertResult = await this.supabaseService.bulkInsertJobs(result.jobs);
       
+      // Mark jobs as inactive if they weren't seen in this scrape
+      if (result.jobs.length > 0) {
+        const sourceId = await this.supabaseService.getOrCreateJobSource('arbeitnow');
+        if (sourceId) {
+          const seenJobUrls = result.jobs.map(jobData => jobData.job.job_url);
+          const inactiveCount = await this.supabaseService.markInactiveJobs(sourceId, seenJobUrls);
+          console.log(`   • ${inactiveCount} jobs marked as inactive`);
+        }
+      }
+      
       const endTime = Date.now();
       const duration = (endTime - startTime) / 1000;
       
       console.log(`✅ Arbeitnow scraping completed in ${duration}s:`);
       console.log(`   • ${insertResult.inserted} jobs inserted`);
-      console.log(`   • ${insertResult.skipped} jobs skipped (duplicates)`);
+      console.log(`   • ${insertResult.updated} jobs updated`);
       console.log(`   • ${insertResult.errors.length} errors`);
       
       if (insertResult.errors.length > 0) {
@@ -213,12 +223,22 @@ export class CronJobService {
       // Insert jobs into database
       const insertResult = await this.supabaseService.bulkInsertJobs(jobsWithTechnologies);
       
+      // Mark jobs as inactive if they weren't seen in this scrape
+      if (result.jobs && result.jobs.length > 0) {
+        const sourceId = await this.supabaseService.getOrCreateJobSource('swissdevjobs');
+        if (sourceId) {
+          const seenJobUrls = result.jobs.map(job => job.url);
+          const inactiveCount = await this.supabaseService.markInactiveJobs(sourceId, seenJobUrls);
+          console.log(`   • ${inactiveCount} jobs marked as inactive`);
+        }
+      }
+      
       const endTime = Date.now();
       const duration = (endTime - startTime) / 1000;
       
       console.log(`✅ SwissDevJobs scraping completed in ${duration}s:`);
       console.log(`   • ${insertResult.inserted} jobs inserted`);
-      console.log(`   • ${insertResult.skipped} jobs skipped (duplicates)`);
+      console.log(`   • ${insertResult.updated} jobs updated`);
       console.log(`   • ${insertResult.errors.length} errors`);
       
       if (insertResult.errors.length > 0) {
