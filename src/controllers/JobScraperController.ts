@@ -1,7 +1,8 @@
 import { Request, Response } from "express";
 import { SwissDevJobsScraper } from "../scrapers/SwissDevJobsScraper";
 import { ScraperResponse } from "../types/job";
-import { SupabaseService } from "../services/SupabaseService";
+import { SupabaseService, JobApplication } from "../services/SupabaseService";
+import { JobApplicationService, JobApplicationResult } from "../services/JobApplicationService";
 import { CronJobService } from "../services/CronJobService";
 import { MAIN_ROLE_FILTERS } from "../config/roleFilters";
 
@@ -265,6 +266,146 @@ export class JobScraperController {
       res.status(500).json({
         status: "error",
         message: "Failed to get job counts by role",
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Apply to jobs endpoint
+  static async applyToJobs(req: Request, res: Response): Promise<void> {
+    try {
+      console.log("🚀 Starting job application process...");
+
+      // Get jobs that are ready for application
+      const jobsForApplication =
+        await JobScraperController.supabaseService.getJobsForApplication();
+
+      if (jobsForApplication.length === 0) {
+        res.status(200).json({
+          status: "success",
+          message: "No jobs found matching the criteria for application",
+          data: {
+            totalProcessed: 0,
+            successful: 0,
+            failed: 0,
+            results: [],
+          },
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      console.log(
+        `📋 Found ${jobsForApplication.length} jobs ready for application`
+      );
+
+      const applicationService = new JobApplicationService();
+      const results: JobApplicationResult[] = [];
+      let successful = 0;
+      let failed = 0;
+
+      // Process each job (you might want to limit this for testing)
+      const maxJobs = parseInt(req.query.limit as string) || 50;
+      const jobsToProcess = jobsForApplication.slice(0, maxJobs);
+
+      console.log(
+        `🎯 Processing ${jobsToProcess.length} jobs (limited to ${maxJobs})`
+      );
+
+      for (const job of jobsToProcess) {
+        try {
+          console.log(`\n📝 Processing: ${job.job_title} at ${job.company}`);
+
+          const result = await applicationService.applyToJob(job);
+          results.push(result);
+
+          if (result.success) {
+            successful++;
+            console.log(`✅ Successfully processed: ${job.job_title}`);
+          } else {
+            failed++;
+            console.log(
+              `❌ Failed to process: ${job.job_title} - ${result.message}`
+            );
+          }
+
+          // Add small delay between applications to be respectful
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        } catch (error) {
+          failed++;
+          const errorResult: JobApplicationResult = {
+            jobId: job.id || "",
+            jobTitle: job.job_title,
+            company: job.company,
+            success: false,
+            status: "error",
+            message: `Unexpected error: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            error: error instanceof Error ? error.message : String(error),
+          };
+          results.push(errorResult);
+          console.error(
+            `💥 Unexpected error processing ${job.job_title}:`,
+            error
+          );
+        }
+      }
+
+      res.status(200).json({
+        status: "success",
+        message: `Job application process completed. ${successful} successful, ${failed} failed.`,
+        data: {
+          totalProcessed: results.length,
+          successful,
+          failed,
+          results,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Error in job application process:", error);
+      res.status(500).json({
+        status: "error",
+        message: "Failed to process job applications",
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Get jobs ready for application (preview)
+  static async getJobsForApplication(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    try {
+      const jobs =
+        await JobScraperController.supabaseService.getJobsForApplication();
+
+      res.status(200).json({
+        status: "success",
+        message: `Found ${jobs.length} jobs ready for application`,
+        data: {
+          count: jobs.length,
+          jobs: jobs.map((job: any) => ({
+            id: job.id,
+            job_title: job.job_title,
+            company: job.company,
+            location: job.location,
+            job_url: job.job_url,
+            technologies: job.technologies,
+            updated_at: job.updated_at,
+          })),
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Error fetching jobs for application:", error);
+      res.status(500).json({
+        status: "error",
+        message: "Failed to fetch jobs ready for application",
         error: error instanceof Error ? error.message : "Unknown error",
         timestamp: new Date().toISOString(),
       });
