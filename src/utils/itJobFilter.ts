@@ -1,4 +1,3 @@
-
 // Keywords that strongly indicate IT/Tech jobs
 const IT_KEYWORDS = [
   // Programming languages
@@ -204,11 +203,6 @@ export function isITJob(
   const descriptionLower = (description || "").toLowerCase();
   const combinedText = `${titleLower} ${descriptionLower}`;
 
-  // Quick wins - if it has technologies listed, it's likely IT
-  if (technologies && technologies.length > 0) {
-    return true;
-  }
-
   // Check for strong IT indicators in title
   const itTitleKeywords = [
     "developer",
@@ -257,16 +251,27 @@ export function isITJob(
   // Count non-IT keywords
   for (const keyword of NON_IT_KEYWORDS) {
     if (titleLower.includes(keyword.toLowerCase())) {
-      nonItScore += 2; // Title matches are stronger indicators
+      nonItScore += 5; // Title matches are stronger indicators
     } else if (descriptionLower.includes(keyword.toLowerCase())) {
       nonItScore++;
     }
   }
 
   // Decision logic
-  if (itScore >= 3) return true; // Strong IT indication
-  if (nonItScore >= 2 && itScore === 0) return false; // Strong non-IT indication
-  if (itScore > nonItScore) return true; // More IT than non-IT indicators
+  // Strong non-IT indication in title should exclude the job
+  if (nonItScore >= 5) return false; // Title contains non-IT job type
+  
+  // Strong IT indication
+  if (itScore >= 3) return true;
+  
+  // Clear non-IT job with no IT indicators
+  if (nonItScore >= 2 && itScore === 0) return false;
+  
+  // More IT than non-IT indicators
+  if (itScore > nonItScore) return true;
+  
+  // If non-IT score is higher, exclude the job
+  if (nonItScore > itScore) return false;
 
   // For edge cases, default to including if we have any IT indicators
   return itScore > 0;

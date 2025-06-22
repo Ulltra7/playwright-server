@@ -74,7 +74,7 @@ export class ArbeitnowScraper extends BaseScraper {
         );
 
         // Check if there are more pages
-        hasMorePages = currentPage < response.meta.last_page;
+        hasMorePages = response.links.next !== null;
         currentPage++;
 
         // Add delay between requests to be respectful to the API
@@ -121,7 +121,7 @@ export class ArbeitnowScraper extends BaseScraper {
 
       const data: ArbeitnowApiResponse = await response.json();
       console.log(
-        `📊 API returned ${data.data.length} jobs (page ${data.meta.current_page} of ${data.meta.last_page})`
+        `📊 API returned ${data.data.length} jobs (page ${data.meta.current_page} of ${data.meta.last_page || 'undefined'})`
       );
 
       return data;

@@ -1262,25 +1262,55 @@ export class SupabaseService {
         return 0;
       }
 
-      // Update all jobs from this source that weren't seen in this scrape
-      const { data, error } = await this.supabase
-        .from("jobs")
-        .update({ is_active: false })
-        .eq("source_id", sourceId)
-        .eq("is_active", true)
-        .not(
-          "job_url",
-          "in",
-          `(${activeJobUrls.map((url) => `"${url}"`).join(",")})`
-        )
-        .select();
+      // Create a Set for faster lookup
+      const activeUrlSet = new Set(activeJobUrls);
 
-      if (error) {
-        console.error("Error marking jobs as inactive:", error);
+      // First, get all currently active jobs from this source
+      const { data: currentActiveJobs, error: fetchError } = await this.supabase
+        .from("jobs")
+        .select("id, job_url")
+        .eq("source_id", sourceId)
+        .eq("is_active", true);
+
+      if (fetchError) {
+        console.error("Error fetching active jobs:", fetchError);
         return 0;
       }
 
-      return data?.length || 0;
+      if (!currentActiveJobs || currentActiveJobs.length === 0) {
+        return 0;
+      }
+
+      // Find jobs that should be marked as inactive
+      const jobsToMarkInactive = currentActiveJobs.filter(
+        job => !activeUrlSet.has(job.job_url)
+      );
+
+      if (jobsToMarkInactive.length === 0) {
+        return 0;
+      }
+
+      // Batch update jobs in chunks to avoid any potential issues
+      const chunkSize = 100;
+      let totalMarked = 0;
+
+      for (let i = 0; i < jobsToMarkInactive.length; i += chunkSize) {
+        const chunk = jobsToMarkInactive.slice(i, i + chunkSize);
+        const jobIds = chunk.map(job => job.id);
+
+        const { error: updateError } = await this.supabase
+          .from("jobs")
+          .update({ is_active: false })
+          .in("id", jobIds);
+
+        if (updateError) {
+          console.error("Error marking chunk as inactive:", updateError);
+        } else {
+          totalMarked += chunk.length;
+        }
+      }
+
+      return totalMarked;
     } catch (error) {
       console.error("Error in markInactiveJobs:", error);
       return 0;
@@ -1413,6 +1443,50 @@ export class SupabaseService {
     }
 
     return data || [];
+  }
+
+  // Get jobs by source name
+  async getJobsBySource(sourceName: string, limit: number = 10): Promise<Job[]> {
+    try {
+      // First get the source ID
+      const sourceId = await this.getOrCreateJobSource(sourceName);
+      if (!sourceId) {
+        console.error(`Source not found: ${sourceName}`);
+        return [];
+      }
+
+      // Get jobs from this source
+      const { data: jobs, error } = await this.supabase
+        .from("jobs")
+        .select(`
+          *,
+          job_technologies (
+            technologies (
+              id,
+              name,
+              category
+            )
+          )
+        `)
+        .eq("source_id", sourceId)
+        .eq("is_active", true)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        console.error("Error fetching jobs by source:", error);
+        return [];
+      }
+
+      // Transform the data to include technologies
+      return (jobs || []).map(job => ({
+        ...job,
+        technologies: job.job_technologies?.map((jt: any) => jt.technologies) || []
+      }));
+    } catch (error) {
+      console.error("Error in getJobsBySource:", error);
+      return [];
+    }
   }
 }
 
