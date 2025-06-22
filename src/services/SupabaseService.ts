@@ -22,7 +22,8 @@ export interface Technology {
   created_at?: Date;
 }
 
-export interface JobApplication {
+// New Job interface for the jobs table
+export interface Job {
   id?: string;
   job_title: string;
   company: string;
@@ -32,9 +33,19 @@ export interface JobApplication {
   description?: string;
   requirements?: string;
   source_id: string;
-  scraped_at: Date;
+  is_active?: boolean;
+  created_at?: Date;
+  updated_at?: Date;
+  
+  // Populated fields (not in database)
+  technologies?: Technology[];
+  source?: JobSource;
+}
 
-  // Application tracking fields
+// New Application interface for the applications table
+export interface Application {
+  id?: string;
+  job_id: string;
   application_status:
     | "not_applied"
     | "applied"
@@ -47,19 +58,23 @@ export interface JobApplication {
   interview_date?: Date;
   notes?: string;
   priority: "low" | "medium" | "high";
-
-  // Timestamps
   created_at?: Date;
   updated_at?: Date;
+}
 
-  // Populated fields (not in database)
-  technologies?: Technology[];
-  source?: JobSource;
+// Keep JobApplication interface for backward compatibility
+export interface JobApplication extends Job {
+  // Application tracking fields
+  application_status?: Application["application_status"];
+  priority?: Application["priority"];
+  applied_at?: Date;
+  interview_date?: Date;
+  notes?: string;
+  scraped_at?: Date; // For backward compatibility
 }
 
 export class SupabaseService {
   private supabase: SupabaseClient;
-  private tableName = "job_applications";
 
   constructor() {
     const supabaseUrl = process.env.SUPABASE_URL;
@@ -98,14 +113,12 @@ export class SupabaseService {
         .from("job_sources")
         .insert({
           name: sourceName,
-          display_name:
-            sourceName.charAt(0).toUpperCase() + sourceName.slice(1),
-          is_active: true,
+          display_name: this.formatSourceDisplayName(sourceName),
         })
-        .select("id")
+        .select()
         .single();
 
-      if (createError) {
+      if (createError || !newSource) {
         console.error("Error creating job source:", createError);
         return null;
       }
@@ -123,23 +136,26 @@ export class SupabaseService {
     category = "tool"
   ): Promise<string | null> {
     try {
-      // Normalize the technology name for better matching
       const normalizedName = this.normalizeTechnologyName(technologyName);
 
-      // First try exact match with normalized name
+      if (!normalizedName) {
+        return null;
+      }
+
+      // First try exact match
       const { data: exactMatch, error: exactError } = await this.supabase
         .from("technologies")
         .select("id, name")
-        .ilike("name", normalizedName)
+        .eq("name", normalizedName)
         .single();
 
       if (exactMatch) {
         return exactMatch.id;
       }
 
+      // If no exact match and not a "no rows" error, log it
       if (exactError && exactError.code !== "PGRST116") {
-        console.error("Error checking technology:", exactError);
-        return null;
+        console.error("Error checking existing technology:", exactError);
       }
 
       // Try fuzzy matching for common variations
@@ -148,24 +164,23 @@ export class SupabaseService {
         return fuzzyMatch.id;
       }
 
-      // Create new technology if no match found
+      // Create new technology
+      const detectedCategory = this.categorizeTechnology(normalizedName);
       const { data: newTech, error: createError } = await this.supabase
         .from("technologies")
         .insert({
           name: normalizedName,
-          category: this.categorizeTechnology(normalizedName) || category,
+          category: detectedCategory || category,
         })
-        .select("id")
+        .select()
         .single();
 
-      if (createError) {
+      if (createError || !newTech) {
         console.error("Error creating technology:", createError);
         return null;
       }
 
-      console.log(`✨ Created new technology: ${normalizedName}`);
-
-      // Link the new technology to appropriate job roles
+      // Link technology to job roles
       await this.linkTechnologyToJobRoles(newTech.id, normalizedName);
 
       return newTech.id;
@@ -175,31 +190,46 @@ export class SupabaseService {
     }
   }
 
-  // Normalize technology names for consistent matching
+  // Normalize technology names
   private normalizeTechnologyName(name: string): string {
-    // Remove extra spaces and convert to a standard format
-    let normalized = name.trim().replace(/\s+/g, " ");
+    // Trim and check for empty
+    const trimmed = name.trim();
+    if (!trimmed) return "";
+
+    // Remove common suffixes/prefixes that don't add value
+    const cleaned = trimmed
+      .replace(/\s*\(.*?\)\s*/g, "") // Remove parenthetical content
+      .replace(/[^\w\s\.\#\+\-]/g, " ") // Keep only alphanumeric, spaces, and common tech chars
+      .replace(/\s+/g, " ") // Normalize multiple spaces
+      .trim();
 
     // Common technology name normalizations
     const normalizations: { [key: string]: string } = {
+      // JavaScript variations
+      javascript: "JavaScript",
+      js: "JavaScript",
+      "java script": "JavaScript",
+
       // Node.js variations
-      "node js": "Node.js",
-      nodejs: "Node.js",
       "node.js": "Node.js",
-      "NODE JS": "Node.js",
-      NODEJS: "Node.js",
+      nodejs: "Node.js",
+      node: "Node.js",
+      "node js": "Node.js",
 
       // React variations
-      "react js": "React",
-      reactjs: "React",
+      react: "React",
       "react.js": "React",
+      reactjs: "React",
+      "react js": "React",
 
       // Vue variations
-      "vue js": "Vue.js",
-      vuejs: "Vue.js",
+      vue: "Vue.js",
       "vue.js": "Vue.js",
+      vuejs: "Vue.js",
+      "vue js": "Vue.js",
 
       // Angular variations
+      angular: "Angular",
       "angular js": "Angular",
       angularjs: "AngularJS", // Different framework
       "angular.js": "AngularJS",
@@ -236,8 +266,8 @@ export class SupabaseService {
       github: "GitHub",
     };
 
-    const lowerKey = normalized.toLowerCase();
-    return normalizations[lowerKey] || this.capitalizeProperNoun(normalized);
+    const lowerKey = cleaned.toLowerCase();
+    return normalizations[lowerKey] || this.capitalizeProperNoun(cleaned);
   }
 
   // Capitalize technology names properly
@@ -297,38 +327,53 @@ export class SupabaseService {
           lowerTarget.includes(lowerTech)
         ) {
           // Additional validation to avoid false positives
-          if (this.isSimilarTechnology(lowerTarget, lowerTech)) {
-            console.log(
-              `🔄 Fuzzy matched "${normalizedName}" to existing "${tech.name}"`
-            );
+          if (this.isSimilarTechnology(normalizedName, tech.name)) {
             return tech;
           }
+        }
+
+        // Calculate similarity for close matches
+        const similarity = this.calculateSimilarity(lowerTarget, lowerTech);
+        if (similarity > 0.8) {
+          // 80% similarity threshold
+          return tech;
         }
       }
 
       return null;
     } catch (error) {
-      console.error("Error in findTechnologyByFuzzyMatch:", error);
+      console.error("Error in fuzzy matching:", error);
       return null;
     }
   }
 
-  // Check if two technology names are similar enough to be considered the same
+  // Check if two technology names are similar
   private isSimilarTechnology(name1: string, name2: string): boolean {
-    // Remove common suffixes/prefixes for comparison
-    const cleanName1 = name1
-      .replace(/\.(js|ts)$/, "")
-      .replace(/^(lib|framework)/, "");
-    const cleanName2 = name2
-      .replace(/\.(js|ts)$/, "")
-      .replace(/^(lib|framework)/, "");
+    const lower1 = name1.toLowerCase();
+    const lower2 = name2.toLowerCase();
 
-    // Check if the core names are similar
-    const similarity = this.calculateSimilarity(cleanName1, cleanName2);
-    return similarity > 0.8; // 80% similarity threshold
+    // Check for common variations
+    const variations = [
+      ["js", "javascript"],
+      ["node", "node.js"],
+      ["react", "react.js"],
+      ["vue", "vue.js"],
+      ["angular", "angularjs"],
+    ];
+
+    for (const [a, b] of variations) {
+      if (
+        (lower1.includes(a) && lower2.includes(b)) ||
+        (lower1.includes(b) && lower2.includes(a))
+      ) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
-  // Simple string similarity calculation (Levenshtein distance based)
+  // Calculate similarity between two strings (0-1)
   private calculateSimilarity(str1: string, str2: string): number {
     const longer = str1.length > str2.length ? str1 : str2;
     const shorter = str1.length > str2.length ? str2 : str1;
@@ -337,862 +382,521 @@ export class SupabaseService {
       return 1.0;
     }
 
-    const distance = this.levenshteinDistance(longer, shorter);
-    return (longer.length - distance) / longer.length;
+    const editDistance = this.levenshteinDistance(longer, shorter);
+    return (longer.length - editDistance) / longer.length;
   }
 
-  // Calculate Levenshtein distance between two strings
+  // Calculate Levenshtein distance
   private levenshteinDistance(str1: string, str2: string): number {
-    const matrix = Array(str2.length + 1)
-      .fill(null)
-      .map(() => Array(str1.length + 1).fill(null));
+    const matrix: number[][] = [];
 
-    for (let i = 0; i <= str1.length; i++) {
-      matrix[0][i] = i;
+    for (let i = 0; i <= str2.length; i++) {
+      matrix[i] = [i];
     }
 
-    for (let j = 0; j <= str2.length; j++) {
-      matrix[j][0] = j;
+    for (let j = 0; j <= str1.length; j++) {
+      matrix[0][j] = j;
     }
 
-    for (let j = 1; j <= str2.length; j++) {
-      for (let i = 1; i <= str1.length; i++) {
-        const indicator = str1[i - 1] === str2[j - 1] ? 0 : 1;
-        matrix[j][i] = Math.min(
-          matrix[j][i - 1] + 1, // deletion
-          matrix[j - 1][i] + 1, // insertion
-          matrix[j - 1][i - 1] + indicator // substitution
-        );
+    for (let i = 1; i <= str2.length; i++) {
+      for (let j = 1; j <= str1.length; j++) {
+        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1, // substitution
+            matrix[i][j - 1] + 1, // insertion
+            matrix[i - 1][j] + 1 // deletion
+          );
+        }
       }
     }
 
     return matrix[str2.length][str1.length];
   }
 
-  // Link technology to job roles
+  // Link technology to appropriate job roles
   private async linkTechnologyToJobRoles(
     technologyId: string,
     technologyName: string
   ): Promise<void> {
     try {
-      const roles = this.determineJobRoles(technologyName);
+      const jobRoles = this.determineJobRoles(technologyName);
 
-      if (roles.length === 0) {
-        console.log(
-          `⚠️ No job roles determined for technology: ${technologyName}`
-        );
+      if (jobRoles.length === 0) {
         return;
       }
 
-      // Get job role IDs
-      const roleInserts = [];
-      for (const { roleName, relevanceScore } of roles) {
-        const { data: roleData } = await this.supabase
-          .from("job_roles")
-          .select("id")
-          .eq("name", roleName)
-          .single();
+      // Update the technology with job roles
+      const { error } = await this.supabase
+        .from("technologies")
+        .update({ job_roles: jobRoles.map((r) => r.role) })
+        .eq("id", technologyId);
 
-        if (roleData) {
-          roleInserts.push({
-            technology_id: technologyId,
-            job_role_id: roleData.id,
-            relevance_score: relevanceScore,
-          });
-        }
-      }
-
-      if (roleInserts.length > 0) {
-        const { error } = await this.supabase
-          .from("technology_job_roles")
-          .insert(roleInserts);
-
-        if (error) {
-          console.error("Error linking technology to roles:", error);
-        } else {
-          console.log(
-            `🔗 Linked ${technologyName} to ${roleInserts.length} job roles`
-          );
-        }
+      if (error) {
+        console.error("Error updating technology job roles:", error);
       }
     } catch (error) {
-      console.error("Error in linkTechnologyToJobRoles:", error);
+      console.error("Error linking technology to job roles:", error);
     }
   }
 
-  // Determine job roles for a technology
+  // Determine which job roles a technology belongs to
   private determineJobRoles(
     name: string
-  ): Array<{ roleName: string; relevanceScore: number }> {
+  ): Array<{ role: string; relevance: number }> {
     const lowerName = name.toLowerCase();
-    const roles: Array<{ roleName: string; relevanceScore: number }> = [];
+    const roles: Array<{ role: string; relevance: number }> = [];
 
-    const roleMapping: Record<string, { keywords: string[]; score: number }> = {
-      frontend_developer: {
-        keywords: [
-          "react",
-          "angular",
-          "vue",
-          "svelte",
-          "jquery",
-          "html",
-          "css",
-          "sass",
-          "less",
-          "bootstrap",
-          "tailwind",
-          "material-ui",
-          "webpack",
-          "vite",
-          "babel",
-          "next.js",
-          "nuxt",
-          "gatsby",
-          "emotion",
-          "styled-components",
-          "redux",
-          "mobx",
-          "vuex",
-        ],
-        score: 100,
-      },
-      backend_developer: {
-        keywords: [
-          "node.js",
-          "express",
-          "django",
-          "flask",
-          "fastapi",
-          "laravel",
-          "spring",
-          ".net",
-          "asp.net",
-          "rails",
-          "golang",
-          "rust",
-          "php",
-          "java",
-          "c#",
-          "python",
-          "ruby",
-          "nest.js",
-          "koa",
-          "hapi",
-          "sinatra",
-          "gin",
-          "echo",
-          "fiber",
-        ],
-        score: 100,
-      },
-      mobile_developer: {
-        keywords: [
-          "react native",
-          "flutter",
-          "swift",
-          "kotlin",
-          "ionic",
-          "xamarin",
-          "android",
-          "ios",
-          "objective-c",
-          "swiftui",
-          "jetpack compose",
-        ],
-        score: 100,
-      },
-      devops_engineer: {
-        keywords: [
-          "docker",
-          "kubernetes",
-          "terraform",
-          "ansible",
-          "jenkins",
-          "gitlab",
-          "github actions",
-          "circleci",
-          "helm",
-          "prometheus",
-          "grafana",
-          "elk",
-          "nginx",
-          "apache",
-          "travis",
-          "bamboo",
-          "puppet",
-          "chef",
-          "vault",
-        ],
-        score: 100,
-      },
-      cloud_architect: {
-        keywords: [
-          "aws",
-          "azure",
-          "google cloud",
-          "gcp",
-          "cloudformation",
-          "serverless",
-          "lambda",
-          "ec2",
-          "s3",
-          "cloudfront",
-          "api gateway",
-          "cloud functions",
-        ],
-        score: 100,
-      },
-      data_scientist: {
-        keywords: [
-          "tensorflow",
-          "pytorch",
-          "scikit-learn",
-          "keras",
-          "pandas",
-          "numpy",
-          "jupyter",
-          "r",
-          "sas",
-          "matlab",
-          "scipy",
-          "statsmodels",
-          "seaborn",
-          "matplotlib",
-          "plotly",
-          "nltk",
-          "spacy",
-          "opencv",
-        ],
-        score: 100,
-      },
-      data_engineer: {
-        keywords: [
-          "spark",
-          "hadoop",
-          "airflow",
-          "kafka",
-          "flink",
-          "beam",
-          "dbt",
-          "snowflake",
-          "redshift",
-          "bigquery",
-          "databricks",
-          "presto",
-          "hive",
-        ],
-        score: 100,
-      },
-      database_administrator: {
-        keywords: [
-          "postgresql",
-          "mysql",
-          "oracle",
-          "sql server",
-          "mariadb",
-          "db2",
-          "sybase",
-          "backup",
-          "replication",
-          "performance tuning",
-        ],
-        score: 90,
-      },
-      qa_engineer: {
-        keywords: [
-          "jest",
-          "cypress",
-          "selenium",
-          "playwright",
-          "mocha",
-          "jasmine",
-          "junit",
-          "testng",
-          "postman",
-          "jmeter",
-          "loadrunner",
-          "appium",
-          "cucumber",
-          "robot framework",
-          "pytest",
-          "rspec",
-        ],
-        score: 100,
-      },
-      security_engineer: {
-        keywords: [
-          "owasp",
-          "burp suite",
-          "metasploit",
-          "nessus",
-          "wireshark",
-          "kali",
-          "siem",
-          "splunk",
-          "crowdstrike",
-          "okta",
-          "auth0",
-          "oauth",
-          "jwt",
-          "encryption",
-          "penetration testing",
-        ],
-        score: 100,
-      },
-      ux_ui_designer: {
-        keywords: [
-          "figma",
-          "sketch",
-          "adobe xd",
-          "photoshop",
-          "illustrator",
-          "invision",
-          "zeplin",
-          "principle",
-          "framer",
-          "after effects",
-          "prototyping",
-          "wireframing",
-          "user research",
-        ],
-        score: 100,
-      },
-      product_manager: {
-        keywords: [
-          "jira",
-          "confluence",
-          "productboard",
-          "amplitude",
-          "mixpanel",
-          "google analytics",
-          "a/b testing",
-          "roadmapping",
-          "user stories",
-        ],
-        score: 90,
-      },
-      ai_ml_engineer: {
-        keywords: [
-          "machine learning",
-          "deep learning",
-          "neural network",
-          "nlp",
-          "computer vision",
-          "reinforcement learning",
-          "gan",
-          "transformer",
-          "bert",
-          "gpt",
-          "llm",
-          "hugging face",
-          "mlflow",
-          "kubeflow",
-        ],
-        score: 100,
-      },
-    };
+    // Backend role patterns
+    const backendPatterns = [
+      // Languages
+      { pattern: /\b(java|kotlin|scala)\b/, relevance: 1.0 },
+      { pattern: /\b(python|django|flask|fastapi)\b/, relevance: 1.0 },
+      { pattern: /\b(c#|\.net|asp\.net|dotnet)\b/, relevance: 1.0 },
+      { pattern: /\b(php|laravel|symfony)\b/, relevance: 1.0 },
+      { pattern: /\b(ruby|rails)\b/, relevance: 1.0 },
+      { pattern: /\b(go|golang)\b/, relevance: 1.0 },
+      { pattern: /\b(rust)\b/, relevance: 1.0 },
+      { pattern: /\b(node\.js|nodejs|express|nestjs)\b/, relevance: 0.9 },
+      { pattern: /\b(elixir|phoenix)\b/, relevance: 1.0 },
 
-    // Check each role's technologies
-    for (const [roleName, config] of Object.entries(roleMapping)) {
-      if (
-        config.keywords.some(
-          (keyword) =>
-            lowerName.includes(keyword) || keyword.includes(lowerName)
-        )
-      ) {
-        roles.push({ roleName, relevanceScore: config.score });
-      }
-    }
-
-    // Add fullstack_developer if both frontend and backend
-    const hasRole = (name: string) => roles.some((r) => r.roleName === name);
-    if (hasRole("frontend_developer") && hasRole("backend_developer")) {
-      if (!hasRole("fullstack_developer")) {
-        roles.push({ roleName: "fullstack_developer", relevanceScore: 100 });
-      }
-    }
-
-    // Generic programming languages can be used by multiple roles
-    const genericTechs = [
-      "git",
-      "github",
-      "gitlab",
-      "agile",
-      "scrum",
-      "rest api",
-      "graphql",
+      // Backend specific tools
+      { pattern: /\b(spring|spring boot|hibernate)\b/, relevance: 1.0 },
+      { pattern: /\b(microservices|api|rest|graphql|grpc)\b/, relevance: 0.9 },
+      { pattern: /\b(rabbitmq|kafka|redis|memcached)\b/, relevance: 0.9 },
+      { pattern: /\b(elasticsearch|solr)\b/, relevance: 0.8 },
     ];
-    if (genericTechs.some((tech) => lowerName.includes(tech))) {
-      const genericRoles = [
-        { roleName: "frontend_developer", relevanceScore: 60 },
-        { roleName: "backend_developer", relevanceScore: 60 },
-        { roleName: "mobile_developer", relevanceScore: 60 },
-      ];
 
-      for (const genericRole of genericRoles) {
-        if (!hasRole(genericRole.roleName)) {
-          roles.push(genericRole);
+    // Frontend role patterns
+    const frontendPatterns = [
+      // Core frontend
+      { pattern: /\b(html|css|sass|scss|less)\b/, relevance: 1.0 },
+      { pattern: /\b(javascript|typescript|js|ts)\b/, relevance: 0.9 },
+
+      // Frameworks
+      { pattern: /\b(react|reactjs|react\.js|redux)\b/, relevance: 1.0 },
+      { pattern: /\b(angular|angularjs)\b/, relevance: 1.0 },
+      { pattern: /\b(vue|vuejs|vue\.js|vuex)\b/, relevance: 1.0 },
+      { pattern: /\b(svelte|sveltekit)\b/, relevance: 1.0 },
+      { pattern: /\b(next\.js|nextjs|gatsby|nuxt)\b/, relevance: 1.0 },
+
+      // Frontend tools
+      { pattern: /\b(webpack|vite|rollup|parcel)\b/, relevance: 0.8 },
+      { pattern: /\b(tailwind|bootstrap|material.ui|chakra)\b/, relevance: 0.9 },
+      { pattern: /\b(styled.components|emotion)\b/, relevance: 0.8 },
+    ];
+
+    // Fullstack patterns (can be both)
+    const fullstackPatterns = [
+      { pattern: /\b(javascript|typescript|js|ts)\b/, relevance: 0.8 },
+      { pattern: /\b(node\.js|nodejs)\b/, relevance: 0.8 },
+      { pattern: /\b(next\.js|nextjs|nuxt|sveltekit)\b/, relevance: 0.9 },
+      { pattern: /\b(fullstack|full.stack)\b/, relevance: 1.0 },
+    ];
+
+    // Mobile patterns
+    const mobilePatterns = [
+      { pattern: /\b(react.native|reactnative)\b/, relevance: 1.0 },
+      { pattern: /\b(flutter|dart)\b/, relevance: 1.0 },
+      { pattern: /\b(swift|ios|iphone|ipad)\b/, relevance: 1.0 },
+      { pattern: /\b(kotlin|android)\b/, relevance: 1.0 },
+      { pattern: /\b(xamarin)\b/, relevance: 1.0 },
+      { pattern: /\b(ionic|cordova|phonegap)\b/, relevance: 0.9 },
+    ];
+
+    // DevOps patterns
+    const devopsPatterns = [
+      { pattern: /\b(docker|kubernetes|k8s)\b/, relevance: 1.0 },
+      { pattern: /\b(aws|azure|gcp|google.cloud)\b/, relevance: 0.9 },
+      { pattern: /\b(terraform|ansible|puppet|chef)\b/, relevance: 1.0 },
+      { pattern: /\b(jenkins|gitlab.ci|github.actions|circleci)\b/, relevance: 1.0 },
+      { pattern: /\b(prometheus|grafana|datadog|newrelic)\b/, relevance: 0.9 },
+      { pattern: /\b(nginx|apache|load.balancer)\b/, relevance: 0.8 },
+      { pattern: /\b(bash|shell|linux|unix)\b/, relevance: 0.7 },
+    ];
+
+    // Data patterns
+    const dataPatterns = [
+      // Databases
+      { pattern: /\b(sql|mysql|postgresql|postgres|oracle)\b/, relevance: 0.8 },
+      { pattern: /\b(mongodb|cassandra|couchdb|dynamodb)\b/, relevance: 0.8 },
+      { pattern: /\b(bigquery|redshift|snowflake)\b/, relevance: 1.0 },
+
+      // Data tools
+      { pattern: /\b(pandas|numpy|scipy|jupyter)\b/, relevance: 1.0 },
+      { pattern: /\b(spark|hadoop|hive|presto)\b/, relevance: 1.0 },
+      { pattern: /\b(tableau|powerbi|looker|qlik)\b/, relevance: 1.0 },
+      { pattern: /\b(etl|data.pipeline|airflow|luigi)\b/, relevance: 1.0 },
+    ];
+
+    // AI/ML patterns
+    const aimlPatterns = [
+      { pattern: /\b(tensorflow|pytorch|keras|scikit.learn)\b/, relevance: 1.0 },
+      { pattern: /\b(machine.learning|ml|deep.learning|dl)\b/, relevance: 1.0 },
+      { pattern: /\b(nlp|computer.vision|cv)\b/, relevance: 1.0 },
+      { pattern: /\b(hugging.face|transformers|bert|gpt)\b/, relevance: 1.0 },
+      { pattern: /\b(mlflow|kubeflow|sagemaker)\b/, relevance: 0.9 },
+    ];
+
+    // Security patterns
+    const securityPatterns = [
+      { pattern: /\b(security|cybersecurity|infosec)\b/, relevance: 1.0 },
+      { pattern: /\b(penetration.testing|pen.test|ethical.hacking)\b/, relevance: 1.0 },
+      { pattern: /\b(owasp|burp.suite|metasploit|nmap)\b/, relevance: 1.0 },
+      { pattern: /\b(siem|splunk|elastic.security)\b/, relevance: 1.0 },
+      { pattern: /\b(cryptography|encryption|ssl|tls)\b/, relevance: 0.9 },
+    ];
+
+    // QA patterns
+    const qaPatterns = [
+      { pattern: /\b(selenium|cypress|playwright|puppeteer)\b/, relevance: 1.0 },
+      { pattern: /\b(jest|mocha|jasmine|karma)\b/, relevance: 0.9 },
+      { pattern: /\b(pytest|unittest|testng|junit)\b/, relevance: 0.9 },
+      { pattern: /\b(postman|insomnia|soapui)\b/, relevance: 0.8 },
+      { pattern: /\b(jmeter|locust|gatling)\b/, relevance: 0.9 },
+      { pattern: /\b(qa|quality.assurance|testing|test.automation)\b/, relevance: 1.0 },
+    ];
+
+    // Game dev patterns
+    const gameDevPatterns = [
+      { pattern: /\b(unity|unreal|godot)\b/, relevance: 1.0 },
+      { pattern: /\b(c\+\+|csharp|c#)\b/, relevance: 0.7 },
+      { pattern: /\b(opengl|directx|vulkan|webgl)\b/, relevance: 1.0 },
+      { pattern: /\b(game.engine|game.development|gamedev)\b/, relevance: 1.0 },
+      { pattern: /\b(blender|maya|3ds.max)\b/, relevance: 0.8 },
+    ];
+
+    // Blockchain patterns
+    const blockchainPatterns = [
+      { pattern: /\b(blockchain|ethereum|bitcoin|crypto)\b/, relevance: 1.0 },
+      { pattern: /\b(solidity|web3|smart.contract)\b/, relevance: 1.0 },
+      { pattern: /\b(defi|dapp|nft)\b/, relevance: 1.0 },
+      { pattern: /\b(truffle|hardhat|ganache)\b/, relevance: 1.0 },
+    ];
+
+    // Check each pattern category
+    const checkPatterns = (
+      patterns: Array<{ pattern: RegExp; relevance: number }>,
+      roleName: string
+    ) => {
+      let maxRelevance = 0;
+      for (const { pattern, relevance } of patterns) {
+        if (pattern.test(lowerName)) {
+          maxRelevance = Math.max(maxRelevance, relevance);
         }
       }
-    }
+      if (maxRelevance > 0) {
+        roles.push({ role: roleName, relevance: maxRelevance });
+      }
+    };
 
-    return roles;
+    checkPatterns(backendPatterns, "backend");
+    checkPatterns(frontendPatterns, "frontend");
+    checkPatterns(fullstackPatterns, "fullstack");
+    checkPatterns(mobilePatterns, "mobile");
+    checkPatterns(devopsPatterns, "devops");
+    checkPatterns(dataPatterns, "data");
+    checkPatterns(aimlPatterns, "ai_ml");
+    checkPatterns(securityPatterns, "security");
+    checkPatterns(qaPatterns, "qa");
+    checkPatterns(gameDevPatterns, "game_dev");
+    checkPatterns(blockchainPatterns, "blockchain");
+
+    // Sort by relevance
+    return roles.sort((a, b) => b.relevance - a.relevance);
   }
 
   // Auto-categorize technology based on name
   private categorizeTechnology(name: string): string | null {
     const lowerName = name.toLowerCase();
 
-    const categories = {
-      language: [
-        "javascript",
-        "typescript",
-        "python",
-        "java",
-        "c#",
-        "php",
-        "go",
-        "rust",
-        "kotlin",
-        "swift",
-        "c++",
-        "ruby",
-      ],
-      framework: [
-        "react",
-        "vue.js",
-        "angular",
-        "node.js",
-        "express.js",
-        "django",
-        "laravel",
-        "spring boot",
-        ".net",
-        "next.js",
-      ],
-      database: [
-        "postgresql",
-        "mysql",
-        "mongodb",
-        "redis",
-        "sqlite",
-        "oracle",
-        "cassandra",
-        "dynamodb",
-      ],
-      cloud: [
-        "aws",
-        "azure",
-        "google cloud",
-        "heroku",
-        "digitalocean",
-        "vercel",
-        "netlify",
-      ],
-      tool: [
-        "docker",
-        "kubernetes",
-        "git",
-        "jenkins",
-        "webpack",
-        "vite",
-        "babel",
-        "eslint",
-      ],
-      testing: ["jest", "cypress", "selenium", "mocha", "jasmine", "junit"],
-      methodology: ["agile", "scrum", "kanban", "devops", "ci/cd"],
-    };
-
-    for (const [category, techs] of Object.entries(categories)) {
-      if (
-        techs.some(
-          (tech) => lowerName.includes(tech) || tech.includes(lowerName)
-        )
-      ) {
-        return category;
-      }
+    // Language patterns
+    if (
+      /\b(javascript|typescript|python|java|c\+\+|c#|ruby|go|rust|php|swift|kotlin|scala|elixir|haskell|clojure|r|matlab|julia|perl|lua|dart|objective.c)\b/.test(
+        lowerName
+      )
+    ) {
+      return "language";
     }
 
-    return null;
+    // Framework patterns
+    if (
+      /\b(react|angular|vue|svelte|next|nuxt|gatsby|django|flask|fastapi|spring|express|nestjs|rails|laravel|symfony|asp\.net|gin|echo|phoenix)\b/.test(
+        lowerName
+      )
+    ) {
+      return "framework";
+    }
+
+    // Database patterns
+    if (
+      /\b(sql|mysql|postgresql|postgres|mongodb|redis|cassandra|elasticsearch|dynamodb|firebase|supabase|prisma|sequelize|typeorm)\b/.test(
+        lowerName
+      )
+    ) {
+      return "database";
+    }
+
+    // Cloud patterns
+    if (
+      /\b(aws|amazon|azure|google cloud|gcp|digitalocean|heroku|vercel|netlify|cloudflare)\b/.test(
+        lowerName
+      )
+    ) {
+      return "cloud";
+    }
+
+    // Tool patterns
+    if (
+      /\b(git|docker|kubernetes|jenkins|webpack|vite|npm|yarn|gradle|maven|jest|cypress|selenium|postman|figma|jira|slack)\b/.test(
+        lowerName
+      )
+    ) {
+      return "tool";
+    }
+
+    // Architecture patterns
+    if (
+      /\b(microservices|serverless|rest|graphql|grpc|soap|mvc|mvvm|clean architecture|hexagonal|event.driven|cqrs)\b/.test(
+        lowerName
+      )
+    ) {
+      return "architecture";
+    }
+
+    // Methodology patterns
+    if (
+      /\b(agile|scrum|kanban|waterfall|devops|ci\/cd|tdd|bdd|pair programming|xp)\b/.test(
+        lowerName
+      )
+    ) {
+      return "methodology";
+    }
+
+    // Default to tool
+    return "tool";
   }
 
-  // Check if a job already exists (by URL to avoid duplicates)
+  // Format source display name
+  private formatSourceDisplayName(sourceName: string): string {
+    const mappings: { [key: string]: string } = {
+      swissdevjobs: "Swiss Dev Jobs",
+      linkedin: "LinkedIn",
+      indeed: "Indeed",
+      xing: "Xing",
+      jobs_ch: "Jobs.ch",
+      arbeitnow: "Arbeitnow",
+    };
+
+    return mappings[sourceName.toLowerCase()] || sourceName;
+  }
+
+  // Check if a job already exists
   async jobExists(jobUrl: string): Promise<boolean> {
     try {
       const { data, error } = await this.supabase
-        .from(this.tableName)
+        .from("jobs")
         .select("id")
         .eq("job_url", jobUrl)
         .single();
 
-      if (error && error.code !== "PGRST116") {
-        // PGRST116 = no rows returned
-        console.error("Error checking if job exists:", error);
-        return false;
+      // If we get a row, job exists
+      if (data) return true;
+
+      // If error is "no rows", job doesn't exist
+      if (error && error.code === "PGRST116") return false;
+
+      // Any other error, log it and assume job doesn't exist
+      if (error) {
+        console.error("Error checking job existence:", error);
       }
 
-      return !!data;
+      return false;
     } catch (error) {
       console.error("Error in jobExists:", error);
       return false;
     }
   }
 
-  // Insert a new job application with technologies
-  async insertJob(
-    job: Omit<JobApplication, "id" | "created_at" | "updated_at">,
-    technologies: string[] = []
-  ): Promise<JobApplication | null> {
-    try {
-      // Get or create source ID
-      const sourceId = await this.getOrCreateJobSource(
-        job.source?.name || "unknown"
-      );
-      if (!sourceId) {
-        console.error("Failed to get or create job source");
-        return null;
-      }
-
-      // Insert the job application
-      const { data: jobData, error: jobError } = await this.supabase
-        .from(this.tableName)
-        .insert({
-          job_title: job.job_title,
-          company: job.company,
-          location: job.location,
-          job_url: job.job_url,
-          salary: job.salary,
-          description: job.description,
-          requirements: job.requirements,
-          source_id: sourceId,
-          scraped_at: job.scraped_at.toISOString(),
-          application_status: job.application_status || "not_applied",
-          applied_at: job.applied_at?.toISOString(),
-          interview_date: job.interview_date?.toISOString(),
-          notes: job.notes,
-          priority: job.priority || "medium",
-        })
-        .select()
-        .single();
-
-      if (jobError) {
-        console.error("Error inserting job:", jobError);
-        return null;
-      }
-
-      // Insert technologies if provided
-      if (technologies.length > 0) {
-        const technologyRelations = [];
-
-        for (const techName of technologies) {
-          const techId = await this.getOrCreateTechnology(techName);
-          if (techId) {
-            technologyRelations.push({
-              job_application_id: jobData.id,
-              technology_id: techId,
-            });
-          }
-        }
-
-        if (technologyRelations.length > 0) {
-          const { error: techError } = await this.supabase
-            .from("job_application_technologies")
-            .insert(technologyRelations);
-
-          if (techError) {
-            console.error("Error inserting job technologies:", techError);
-            // Job was inserted but technologies failed - could be handled differently
-          }
-        }
-      }
-
-      return jobData as JobApplication;
-    } catch (error) {
-      console.error("Error in insertJob:", error);
-      return null;
-    }
-  }
-
-  // Update application status
-  async updateApplicationStatus(
-    jobId: string,
-    status: JobApplication["application_status"],
-    additionalData?: Partial<
-      Pick<JobApplication, "applied_at" | "interview_date" | "notes">
-    >
-  ): Promise<boolean> {
-    try {
-      const updateData: any = {
-        application_status: status,
-        updated_at: new Date().toISOString(),
-      };
-
-      if (additionalData?.applied_at) {
-        updateData.applied_at = additionalData.applied_at.toISOString();
-      }
-      if (additionalData?.interview_date) {
-        updateData.interview_date = additionalData.interview_date.toISOString();
-      }
-      if (additionalData?.notes !== undefined) {
-        updateData.notes = additionalData.notes;
-      }
-
-      const { error } = await this.supabase
-        .from(this.tableName)
-        .update(updateData)
-        .eq("id", jobId);
-
-      if (error) {
-        console.error("Error updating application status:", error);
-        return false;
-      }
-
-      return true;
-    } catch (error) {
-      console.error("Error in updateApplicationStatus:", error);
-      return false;
-    }
-  }
-
-  // Get all jobs with optional filtering and pagination (uses view with technologies)
-  async getJobs(filters?: {
-    status?: JobApplication["application_status"];
+  // Get jobs with optional filtering (uses view for backward compatibility)
+  async getJobs(params: {
+    status?: string;
     company?: string;
     source?: string;
-    priority?: JobApplication["priority"];
+    priority?: string;
     technology?: string;
     search?: string;
     role?: string;
     page?: number;
-    limit?: number;
+    pageSize?: number;
     sortBy?: string;
     sortOrder?: "asc" | "desc";
-  }): Promise<{
+  } = {}): Promise<{
     data: JobApplication[];
     total: number;
     page: number;
-    limit: number;
+    pageSize: number;
     totalPages: number;
   }> {
     try {
-      const page = filters?.page || 1;
-      const limit = filters?.limit || 20;
-      const offset = (page - 1) * limit;
-      const sortBy = filters?.sortBy || "scraped_at";
-      const sortOrder = filters?.sortOrder || "desc";
+      const {
+        status,
+        company,
+        source,
+        priority,
+        technology,
+        search,
+        role,
+        page = 1,
+        pageSize = 50,
+        sortBy = "created_at",
+        sortOrder = "desc",
+      } = params;
 
-      // First, get the total count
-      let countQuery = this.supabase
-        .from("jobs_with_technologies")
-        .select("*", { count: "exact", head: true });
-
-      // Apply filters to count query
-      if (filters?.status) {
-        countQuery = countQuery.eq("application_status", filters.status);
-      }
-      if (filters?.company) {
-        countQuery = countQuery.ilike("company", `%${filters.company}%`);
-      }
-      if (filters?.source) {
-        countQuery = countQuery.eq("source_name", filters.source);
-      }
-      if (filters?.priority) {
-        countQuery = countQuery.eq("priority", filters.priority);
-      }
-      if (filters?.technology) {
-        countQuery = countQuery.contains("technologies", [filters.technology]);
-      }
-      if (filters?.search) {
-        countQuery = countQuery.or(
-          `job_title.ilike.%${filters.search}%,company.ilike.%${filters.search}%,location.ilike.%${filters.search}%`
-        );
-      }
-
-      // Handle role filtering
-      if (filters?.role) {
-        // For now, we'll use technology-based filtering until the jobs_with_roles view is created
-        // TODO: Switch to using job_roles column once the view is available
-
-        // Support multiple roles (comma-separated)
-        const roles = filters.role.split(",").map((r) => r.trim());
-
-        // Map role filter key to actual role names
-        const roleMapping: Record<string, string[]> = {
-          frontend: ["frontend_developer"],
-          backend: ["backend_developer", "fullstack_developer"],
-          mobile: ["mobile_developer"],
-          data: ["data_scientist", "data_engineer", "ai_ml_engineer"],
-          management: [
-            "it_manager",
-            "project_manager",
-            "product_manager",
-            "scrum_master",
-          ],
-          ux_ui_designer: ["ux_ui_designer"],
-        };
-
-        // For now, filter by job title patterns that indicate the role
-        const roleTitlePatterns: Record<string, string[]> = {
-          frontend: [
-            "frontend",
-            "front-end",
-            "ui developer",
-            "react",
-            "angular",
-            "vue",
-          ],
-          backend: [
-            "backend",
-            "back-end",
-            "server",
-            "api developer",
-            "node developer",
-            "python developer",
-            "java developer",
-          ],
-          mobile: ["mobile", "ios", "android", "react native", "flutter"],
-          data: [
-            "data",
-            "analytics",
-            "database",
-            "business intelligence",
-            "bi ",
-            "etl",
-            "machine learning",
-            "ml ",
-            "ai ",
-            "artificial intelligence",
-          ],
-          management: ["manager"],
-          ux_ui_designer: ["designer", "ux"],
-        };
-
-        // Build title conditions
-        const titleConditions: string[] = [];
-        roles.forEach((role) => {
-          const patterns = roleTitlePatterns[role];
-          if (patterns) {
-            patterns.forEach((pattern) => {
-              titleConditions.push(`job_title.ilike.%${pattern}%`);
-            });
-          }
-        });
-
-        if (titleConditions.length > 0) {
-          countQuery = countQuery.or(titleConditions.join(","));
-        }
-      }
-
-      const { count } = await countQuery;
-
-      // Now get the actual data
+      // Build the base query using the view
       let query = this.supabase
-        .from("jobs_with_technologies")
-        .select("*")
-        .order(sortBy, { ascending: sortOrder === "asc" })
-        .range(offset, offset + limit - 1);
+        .from("job_applications_view")
+        .select("*", { count: "exact" });
 
-      // Apply same filters to data query
-      if (filters?.status) {
-        query = query.eq("application_status", filters.status);
-      }
-      if (filters?.company) {
-        query = query.ilike("company", `%${filters.company}%`);
-      }
-      if (filters?.source) {
-        query = query.eq("source_name", filters.source);
-      }
-      if (filters?.priority) {
-        query = query.eq("priority", filters.priority);
-      }
-      if (filters?.technology) {
-        query = query.contains("technologies", [filters.technology]);
-      }
-      if (filters?.search) {
-        query = query.or(
-          `job_title.ilike.%${filters.search}%,company.ilike.%${filters.search}%,location.ilike.%${filters.search}%`
-        );
+      // Apply filters
+      if (status) {
+        query = query.eq("application_status", status);
       }
 
-      // Handle role filtering (same as count query)
-      if (filters?.role) {
-        // Support multiple roles (comma-separated)
-        const roles = filters.role.split(",").map((r) => r.trim());
+      if (company) {
+        query = query.ilike("company", `%${company}%`);
+      }
 
-        // For now, filter by job title patterns that indicate the role
-        const roleTitlePatterns: Record<string, string[]> = {
-          frontend: [
-            "frontend",
-            "front-end",
-            "ui developer",
-            "react developer",
-            "angular developer",
-            "vue developer",
-          ],
-          backend: [
-            "backend",
-            "back-end",
-            "server",
-            "api developer",
-            "node developer",
-            "python developer",
-            "java developer",
-          ],
-          mobile: ["mobile", "ios", "android", "react native", "flutter"],
-          data: [
-            "data",
-            "analytics",
-            "database",
-            "business intelligence",
-            "bi ",
-            "etl",
-            "machine learning",
-            "ml ",
-            "ai ",
-            "artificial intelligence",
-          ],
-          management: ["manager"],
-          ux_ui_designer: ["designer", "ux"],
-        };
+      if (source) {
+        // Need to join with job_sources
+        const { data: sourceData } = await this.supabase
+          .from("job_sources")
+          .select("id")
+          .eq("name", source)
+          .single();
 
-        // Build title conditions
-        const titleConditions: string[] = [];
-        roles.forEach((role) => {
-          const patterns = roleTitlePatterns[role];
-          if (patterns) {
-            patterns.forEach((pattern) => {
-              titleConditions.push(`job_title.ilike.%${pattern}%`);
-            });
-          }
-        });
-
-        if (titleConditions.length > 0) {
-          query = query.or(titleConditions.join(","));
+        if (sourceData) {
+          query = query.eq("source_id", sourceData.id);
         }
       }
 
-      const { data, error } = await query;
+      if (priority) {
+        query = query.eq("priority", priority);
+      }
+
+      if (search) {
+        query = query.or(
+          `job_title.ilike.%${search}%,company.ilike.%${search}%,location.ilike.%${search}%`
+        );
+      }
+
+      // Apply role filter
+      if (role) {
+        const { data: techsForRole } = await this.supabase
+          .from("technologies")
+          .select("id")
+          .contains("job_roles", [role]);
+
+        if (techsForRole && techsForRole.length > 0) {
+          const techIds = techsForRole.map((t) => t.id);
+          
+          const { data: jobIdsWithRole } = await this.supabase
+            .from("job_technologies")
+            .select("job_id")
+            .in("technology_id", techIds);
+
+          if (jobIdsWithRole && jobIdsWithRole.length > 0) {
+            const jobIds = [...new Set(jobIdsWithRole.map((j) => j.job_id))];
+            query = query.in("id", jobIds);
+          } else {
+            // No jobs found for this role
+            return {
+              data: [],
+              total: 0,
+              page,
+              pageSize,
+              totalPages: 0,
+            };
+          }
+        }
+      }
+
+      // Apply sorting
+      query = query.order(sortBy, { ascending: sortOrder === "asc" });
+
+      // Apply pagination
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      query = query.range(from, to);
+
+      const { data, error, count } = await query;
 
       if (error) {
         console.error("Error fetching jobs:", error);
+        throw error;
+      }
+
+      // Fetch technologies for the jobs
+      if (data && data.length > 0) {
+        const jobIds = data.map((job) => job.id);
+        
+        const { data: jobTechs } = await this.supabase
+          .from("job_technologies")
+          .select(`
+            job_id,
+            technologies (
+              id,
+              name,
+              category,
+              job_roles
+            )
+          `)
+          .in("job_id", jobIds);
+
+        // Map technologies to jobs
+        const techMap = new Map<string, Technology[]>();
+        if (jobTechs) {
+          jobTechs.forEach((jt: any) => {
+            if (!techMap.has(jt.job_id)) {
+              techMap.set(jt.job_id, []);
+            }
+            if (jt.technologies) {
+              techMap.get(jt.job_id)!.push(jt.technologies);
+            }
+          });
+        }
+
+        // Add technologies to jobs
+        data.forEach((job) => {
+          job.technologies = techMap.get(job.id) || [];
+        });
+
+        // Filter by technology if specified
+        let filteredData = data;
+        if (technology) {
+          filteredData = data.filter((job) =>
+            job.technologies?.some((t) =>
+              t.name.toLowerCase().includes(technology.toLowerCase())
+            )
+          );
+        }
+
         return {
-          data: [],
-          total: 0,
+          data: filteredData,
+          total: technology ? filteredData.length : (count || 0),
           page,
-          limit,
-          totalPages: 0,
+          pageSize,
+          totalPages: Math.ceil((technology ? filteredData.length : (count || 0)) / pageSize),
         };
       }
 
-      const total = count || 0;
-      const totalPages = Math.ceil(total / limit);
-
       return {
-        data: data as JobApplication[],
-        total,
+        data: data || [],
+        total: count || 0,
         page,
-        limit,
-        totalPages,
+        pageSize,
+        totalPages: Math.ceil((count || 0) / pageSize),
       };
     } catch (error) {
       console.error("Error in getJobs:", error);
@@ -1200,86 +904,19 @@ export class SupabaseService {
         data: [],
         total: 0,
         page: 1,
-        limit: 20,
+        pageSize: params.pageSize || 50,
         totalPages: 0,
       };
     }
   }
 
-  // Get jobs ready for application (not_applied status with specific technologies)
-  async getJobsForApplication(): Promise<JobApplication[]> {
-    try {
-      // Define the technologies we want to apply for
-      const targetTechnologies = [
-        "Node.js",
-        "React",
-        "TypeScript",
-        "JavaScript",
-        "Python",
-        "Angular",
-        "Vue.js",
-      ];
-
-      let query = this.supabase
-        .from("jobs_with_technologies")
-        .select("*")
-        .eq("application_status", "not_applied")
-        .order("created_at", { ascending: false });
-
-      const { data, error } = await query;
-
-      if (error) {
-        console.error("Error fetching jobs for application:", error);
-        return [];
-      }
-
-      if (!data) {
-        return [];
-      }
-
-      // Filter jobs that have at least one of our target technologies
-      const filteredJobs = data.filter((job: any) => {
-        if (
-          !job.technologies ||
-          !Array.isArray(job.technologies) ||
-          job.technologies[0] === null
-        ) {
-          return false;
-        }
-
-        // Check if any of the job's technologies match our target technologies
-        return job.technologies.some((tech: string) =>
-          targetTechnologies.some(
-            (targetTech) =>
-              tech.toLowerCase().includes(targetTech.toLowerCase()) ||
-              targetTech.toLowerCase().includes(tech.toLowerCase())
-          )
-        );
-      });
-
-      console.log(
-        `📋 Found ${filteredJobs.length} jobs ready for application out of ${data.length} total not_applied jobs`
-      );
-      return filteredJobs as JobApplication[];
-    } catch (error) {
-      console.error("Error in getJobsForApplication:", error);
-      return [];
-    }
-  }
-
   // Get job statistics
-  async getJobStats(): Promise<{
-    total: number;
-    notApplied: number;
-    applied: number;
-    interviews: number;
-    offers: number;
-    rejected: number;
-  }> {
+  async getJobStats() {
     try {
       const { data, error } = await this.supabase
-        .from(this.tableName)
-        .select("application_status");
+        .from("job_stats")
+        .select("*")
+        .single();
 
       if (error) {
         console.error("Error fetching job stats:", error);
@@ -1293,26 +930,14 @@ export class SupabaseService {
         };
       }
 
-      const stats = {
-        total: data.length,
-        notApplied: data.filter(
-          (job) => job.application_status === "not_applied"
-        ).length,
-        applied: data.filter((job) => job.application_status === "applied")
-          .length,
-        interviews: data.filter((job) =>
-          ["interview_scheduled", "interview_completed"].includes(
-            job.application_status
-          )
-        ).length,
-        offers: data.filter(
-          (job) => job.application_status === "offer_received"
-        ).length,
-        rejected: data.filter((job) => job.application_status === "rejected")
-          .length,
+      return {
+        total: data.total_jobs || 0,
+        notApplied: data.not_applied || 0,
+        applied: data.applied || 0,
+        interviews: data.interviews || 0,
+        offers: data.offers || 0,
+        rejected: data.rejected || 0,
       };
-
-      return stats;
     } catch (error) {
       console.error("Error in getJobStats:", error);
       return {
@@ -1326,103 +951,159 @@ export class SupabaseService {
     }
   }
 
-  // Bulk insert jobs (for scraping results)
+  // Bulk insert jobs with the new schema
   async bulkInsertJobs(
-    jobs: Array<{
-      job: Omit<JobApplication, "id" | "created_at" | "updated_at">;
+    jobsWithTechnologies: Array<{
+      job: Omit<Job, "id" | "created_at" | "updated_at"> & {
+        source?: { name: string; display_name?: string; base_url?: string };
+        scraped_at?: Date; // For backward compatibility
+      };
       technologies: string[];
     }>
   ): Promise<{
     inserted: number;
+    updated: number;
     skipped: number;
     errors: string[];
   }> {
-    const result = {
+    const results = {
       inserted: 0,
+      updated: 0,
       skipped: 0,
       errors: [] as string[],
     };
 
-    for (const { job, technologies } of jobs) {
+    for (const { job, technologies } of jobsWithTechnologies) {
       try {
-        // Check if job already exists
-        const exists = await this.jobExists(job.job_url);
+        // Get or create source
+        let sourceId = job.source_id;
+        if (!sourceId && job.source?.name) {
+          sourceId = await this.getOrCreateJobSource(job.source.name);
+        }
 
-        if (exists) {
-          result.skipped++;
-          console.log(
-            `⏭️ Skipping existing job: ${job.job_title} at ${job.company}`
+        if (!sourceId) {
+          results.errors.push(
+            `Failed to get source for job ${job.job_title}: No source provided`
           );
           continue;
         }
 
-        // Insert new job with technologies
-        const inserted = await this.insertJob(job, technologies);
+        // Check if job already exists
+        const { data: existingJob } = await this.supabase
+          .from("jobs")
+          .select("id")
+          .eq("job_url", job.job_url)
+          .single();
 
-        if (inserted) {
-          result.inserted++;
-          console.log(
-            `✅ Inserted new job: ${job.job_title} at ${job.company} with ${technologies.length} technologies`
-          );
+        if (existingJob) {
+          // Update the existing job's updated_at timestamp
+          const { error: updateError } = await this.supabase
+            .from("jobs")
+            .update({ 
+              updated_at: new Date().toISOString(),
+              is_active: true  // Mark as active since we just saw it
+            })
+            .eq("id", existingJob.id);
+
+          if (updateError) {
+            results.errors.push(
+              `Failed to update job ${job.job_title}: ${updateError.message}`
+            );
+          } else {
+            results.updated++;
+          }
+          continue;
+        }
+
+        // Insert new job
+        const result = await this.insertJob(
+          {
+            job_title: job.job_title,
+            company: job.company,
+            location: job.location,
+            job_url: job.job_url,
+            salary: job.salary,
+            description: job.description,
+            requirements: job.requirements,
+            source_id: sourceId,
+            is_active: true,
+          },
+          technologies
+        );
+
+        if (result.success) {
+          results.inserted++;
         } else {
-          result.errors.push(
-            `Failed to insert: ${job.job_title} at ${job.company}`
+          results.errors.push(
+            `Failed to insert ${job.job_title}: ${result.error}`
           );
         }
-      } catch (error) {
-        result.errors.push(`Error processing ${job.job_title}: ${error}`);
+      } catch (error: any) {
+        results.errors.push(
+          `Error processing ${job.job_title}: ${error.message}`
+        );
       }
     }
 
-    return result;
+    return results;
   }
 
-  // Get all job sources
-  async getJobSources(): Promise<JobSource[]> {
+  // Insert a single job
+  private async insertJob(
+    job: Omit<Job, "id" | "created_at" | "updated_at">,
+    technologies: string[]
+  ): Promise<{ success: boolean; error?: string; jobId?: string }> {
     try {
-      const { data, error } = await this.supabase
-        .from("job_sources")
-        .select("*")
-        .order("display_name");
+      // Insert the job
+      const { data: newJob, error: jobError } = await this.supabase
+        .from("jobs")
+        .insert(job)
+        .select()
+        .single();
 
-      if (error) {
-        console.error("Error fetching job sources:", error);
-        return [];
+      if (jobError || !newJob) {
+        return {
+          success: false,
+          error: jobError?.message || "Failed to insert job",
+        };
       }
 
-      return data as JobSource[];
-    } catch (error) {
-      console.error("Error in getJobSources:", error);
-      return [];
+      // Link technologies
+      if (technologies.length > 0) {
+        const techLinks = [];
+        
+        for (const techName of technologies) {
+          const techId = await this.getOrCreateTechnology(techName);
+          if (techId) {
+            techLinks.push({
+              job_id: newJob.id,
+              technology_id: techId,
+            });
+          }
+        }
+
+        if (techLinks.length > 0) {
+          const { error: linkError } = await this.supabase
+            .from("job_technologies")
+            .insert(techLinks);
+
+          if (linkError) {
+            console.error("Error linking technologies:", linkError);
+          }
+        }
+      }
+
+      return { success: true, jobId: newJob.id };
+    } catch (error: any) {
+      return { success: false, error: error.message };
     }
   }
 
-  // Get all technologies
-  async getTechnologies(): Promise<Technology[]> {
-    try {
-      const { data, error } = await this.supabase
-        .from("technologies")
-        .select("*")
-        .order("category", { ascending: true })
-        .order("name", { ascending: true });
-
-      if (error) {
-        console.error("Error fetching technologies:", error);
-        return [];
-      }
-
-      return data as Technology[];
-    } catch (error) {
-      console.error("Error in getTechnologies:", error);
-      return [];
-    }
-  }
-
-  // Delete a job by ID
+  // Delete a job
   async deleteJob(jobId: string): Promise<boolean> {
     try {
       const { error } = await this.supabase
-        .from(this.tableName)
+        .from("jobs")
         .delete()
         .eq("id", jobId);
 
@@ -1438,17 +1119,51 @@ export class SupabaseService {
     }
   }
 
-  // Update a job by ID
-  async updateJob(jobId: string, updateData: Partial<JobApplication>): Promise<boolean> {
+  // Update job (for backward compatibility)
+  async updateJob(
+    jobId: string,
+    updates: Partial<JobApplication>
+  ): Promise<boolean> {
     try {
-      const { error } = await this.supabase
-        .from(this.tableName)
-        .update(updateData)
-        .eq("id", jobId);
+      // Separate job fields from application fields
+      const jobFields: any = {};
+      const appFields: any = {};
 
-      if (error) {
-        console.error("Error updating job:", error);
-        return false;
+      // Job fields
+      if (updates.job_title) jobFields.job_title = updates.job_title;
+      if (updates.company) jobFields.company = updates.company;
+      if (updates.location) jobFields.location = updates.location;
+      if (updates.salary) jobFields.salary = updates.salary;
+      if (updates.description) jobFields.description = updates.description;
+      if (updates.requirements) jobFields.requirements = updates.requirements;
+
+      // Application fields
+      if (updates.application_status) appFields.application_status = updates.application_status;
+      if (updates.priority) appFields.priority = updates.priority;
+      if (updates.applied_at) appFields.applied_at = updates.applied_at;
+      if (updates.interview_date) appFields.interview_date = updates.interview_date;
+      if (updates.notes) appFields.notes = updates.notes;
+
+      // Update job if needed
+      if (Object.keys(jobFields).length > 0) {
+        const { error } = await this.supabase
+          .from("jobs")
+          .update(jobFields)
+          .eq("id", jobId);
+
+        if (error) {
+          console.error("Error updating job:", error);
+          return false;
+        }
+      }
+
+      // Update or create application if needed
+      if (Object.keys(appFields).length > 0) {
+        return await this.updateApplicationStatus(
+          jobId,
+          appFields.application_status || "not_applied",
+          appFields
+        );
       }
 
       return true;
@@ -1458,64 +1173,201 @@ export class SupabaseService {
     }
   }
 
-  // Get job roles weekly statistics
-  async getJobRolesWeekly(): Promise<any[]> {
+  // Update application status
+  async updateApplicationStatus(
+    jobId: string,
+    status: Application["application_status"],
+    additionalData?: Partial<Application>
+  ): Promise<boolean> {
     try {
+      // Check if application exists
+      const { data: existing } = await this.supabase
+        .from("applications")
+        .select("id")
+        .eq("job_id", jobId)
+        .single();
+
+      if (existing) {
+        // Update existing application
+        const { error } = await this.supabase
+          .from("applications")
+          .update({
+            application_status: status,
+            ...additionalData,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("job_id", jobId);
+
+        return !error;
+      } else {
+        // Create new application
+        const { error } = await this.supabase.from("applications").insert({
+          job_id: jobId,
+          application_status: status,
+          priority: additionalData?.priority || "medium",
+          ...additionalData,
+        });
+
+        return !error;
+      }
+    } catch (error) {
+      console.error("Error updating application status:", error);
+      return false;
+    }
+  }
+
+  // Mark jobs as inactive after scraping
+  async markInactiveJobs(sourceId: string, activeJobUrls: string[]): Promise<number> {
+    try {
+      if (activeJobUrls.length === 0) {
+        console.log("No active job URLs provided, skipping inactive marking");
+        return 0;
+      }
+
+      // Update all jobs from this source that weren't seen in this scrape
       const { data, error } = await this.supabase
-        .from("job_roles_weekly")
-        .select("*")
-        .order("week_start", { ascending: false })
-        .order("job_count", { ascending: false });
+        .from("jobs")
+        .update({ is_active: false })
+        .eq("source_id", sourceId)
+        .eq("is_active", true)
+        .not("job_url", "in", `(${activeJobUrls.map(url => `"${url}"`).join(",")})`)
+        .select();
 
       if (error) {
-        console.error("Error fetching job roles weekly:", error);
+        console.error("Error marking jobs as inactive:", error);
+        return 0;
+      }
+
+      return data?.length || 0;
+    } catch (error) {
+      console.error("Error in markInactiveJobs:", error);
+      return 0;
+    }
+  }
+
+  // Get all job sources
+  async getJobSources(): Promise<JobSource[]> {
+    try {
+      const { data, error } = await this.supabase
+        .from("job_sources")
+        .select("*")
+        .order("display_name");
+
+      if (error) {
+        console.error("Error fetching job sources:", error);
         return [];
       }
 
       return data || [];
     } catch (error) {
-      console.error("Error in getJobRolesWeekly:", error);
+      console.error("Error in getJobSources:", error);
       return [];
     }
   }
 
-  // Get current week job roles statistics
-  async getJobRolesCurrentWeek(): Promise<any[]> {
+  // Get all technologies
+  async getTechnologies(): Promise<Technology[]> {
     try {
       const { data, error } = await this.supabase
-        .from("job_roles_current_week")
-        .select("*");
+        .from("technologies")
+        .select("*")
+        .order("category")
+        .order("name");
 
       if (error) {
-        console.error("Error fetching current week job roles:", error);
+        console.error("Error fetching technologies:", error);
         return [];
       }
 
       return data || [];
     } catch (error) {
-      console.error("Error in getJobRolesCurrentWeek:", error);
+      console.error("Error in getTechnologies:", error);
       return [];
     }
   }
 
-  // Get job roles trend (last 4 weeks)
-  async getJobRolesTrend(): Promise<any[]> {
+  // Get job by ID
+  async getJob(jobId: string): Promise<JobApplication | null> {
     try {
       const { data, error } = await this.supabase
-        .from("job_roles_trend")
+        .from("job_applications_view")
         .select("*")
-        .order("main_role")
-        .order("week_label", { ascending: false });
+        .eq("id", jobId)
+        .single();
 
-      if (error) {
-        console.error("Error fetching job roles trend:", error);
-        return [];
+      if (error || !data) {
+        return null;
       }
 
-      return data || [];
+      // Fetch technologies
+      const { data: jobTechs } = await this.supabase
+        .from("job_technologies")
+        .select(`
+          technologies (
+            id,
+            name,
+            category,
+            job_roles
+          )
+        `)
+        .eq("job_id", jobId);
+
+      if (jobTechs) {
+        data.technologies = jobTechs.map((jt: any) => jt.technologies).filter(Boolean);
+      }
+
+      return data;
     } catch (error) {
-      console.error("Error in getJobRolesTrend:", error);
+      console.error("Error fetching job:", error);
+      return null;
+    }
+  }
+
+  // Job roles view methods
+  async getJobRolesWeekly() {
+    const { data, error } = await this.supabase
+      .from("job_roles_weekly")
+      .select("*")
+      .order("week", { ascending: false })
+      .order("job_count", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching job roles weekly:", error);
       return [];
     }
+
+    return data || [];
+  }
+
+  async getJobRolesCurrentWeek() {
+    const { data, error } = await this.supabase
+      .from("job_roles_current_week")
+      .select("*")
+      .order("job_count", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching current week job roles:", error);
+      return [];
+    }
+
+    return data || [];
+  }
+
+  async getJobRolesTrend() {
+    const { data, error } = await this.supabase
+      .from("job_roles_trend")
+      .select("*")
+      .order("technology", { ascending: true })
+      .order("role", { ascending: true })
+      .order("week", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching job roles trend:", error);
+      return [];
+    }
+
+    return data || [];
   }
 }
+
+export default SupabaseService;
