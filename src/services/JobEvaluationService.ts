@@ -19,14 +19,14 @@ export class JobEvaluationService {
   }
 
   /**
-   * Evaluate all active SwissDevJobs and save results to database
+   * Evaluate all active jobs from all sources
    */
-  async evaluateSwissDevJobs(options?: { forceRewrite?: boolean }): Promise<void> {
+  async evaluateAllActiveJobs(options?: { forceRewrite?: boolean }): Promise<void> {
     const { forceRewrite = false } = options || {};
 
     try {
-      const jobs = await this.getActiveSwissDevJobs();
-      console.log(`Found ${jobs.length} active SwissDevJobs to evaluate`);
+      const jobs = await this.getAllActiveJobs();
+      console.log(`Found ${jobs.length} active jobs to evaluate`);
 
       let jobsToEvaluate: JobForEvaluation[];
 
@@ -53,9 +53,17 @@ export class JobEvaluationService {
 
       console.log("Job evaluation complete");
     } catch (error) {
-      console.error("Error in evaluateSwissDevJobs:", error);
+      console.error("Error in evaluateAllActiveJobs:", error);
       throw error;
     }
+  }
+
+  /**
+   * Evaluate all active SwissDevJobs and save results to database
+   * @deprecated Use evaluateAllActiveJobs instead
+   */
+  async evaluateSwissDevJobs(options?: { forceRewrite?: boolean }): Promise<void> {
+    return this.evaluateAllActiveJobs(options);
   }
 
   /**
@@ -165,7 +173,11 @@ export class JobEvaluationService {
           company,
           location,
           job_url,
-          salary
+          salary,
+          job_sources (
+            name,
+            display_name
+          )
         )
       `
       )
@@ -181,15 +193,59 @@ export class JobEvaluationService {
   }
 
   /**
-   * Fetches all active jobs from SwissDevJobs source for AI evaluation
+   * Fetches all active jobs from all sources for AI evaluation
    */
-  async getActiveSwissDevJobs(): Promise<JobForEvaluation[]> {
+  async getAllActiveJobs(): Promise<JobForEvaluation[]> {
+    try {
+      const { data: jobs, error } = await this.supabaseService.supabase
+        .from("jobs")
+        .select(
+          `
+          *,
+          job_technologies (
+            technologies (
+              id,
+              name,
+              category
+            )
+          ),
+          job_sources (
+            name,
+            display_name
+          )
+        `
+        )
+        .eq("is_active", true)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Error fetching active jobs:", error);
+        return [];
+      }
+
+      return (jobs || []).map((job) => ({
+        ...job,
+        technologies:
+          job.job_technologies
+            ?.map((jt: any) => jt.technologies)
+            .filter(Boolean) || [],
+      }));
+    } catch (error) {
+      console.error("Error in getAllActiveJobs:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Fetches all active jobs from a specific source
+   */
+  async getActiveJobsBySource(sourceName: string): Promise<JobForEvaluation[]> {
     try {
       const sourceId =
-        await this.supabaseService.getOrCreateJobSource("swissdevjobs");
+        await this.supabaseService.getOrCreateJobSource(sourceName);
 
       if (!sourceId) {
-        console.error("SwissDevJobs source not found");
+        console.error(`${sourceName} source not found`);
         return [];
       }
 
@@ -212,7 +268,7 @@ export class JobEvaluationService {
         .order("created_at", { ascending: false });
 
       if (error) {
-        console.error("Error fetching active SwissDevJobs:", error);
+        console.error(`Error fetching active ${sourceName} jobs:`, error);
         return [];
       }
 
@@ -224,9 +280,16 @@ export class JobEvaluationService {
             .filter(Boolean) || [],
       }));
     } catch (error) {
-      console.error("Error in getActiveSwissDevJobs:", error);
+      console.error(`Error in getActiveJobsBySource(${sourceName}):`, error);
       return [];
     }
+  }
+
+  /**
+   * @deprecated Use getAllActiveJobs instead
+   */
+  async getActiveSwissDevJobs(): Promise<JobForEvaluation[]> {
+    return this.getActiveJobsBySource("swissdevjobs");
   }
 }
 

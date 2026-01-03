@@ -422,6 +422,14 @@ export class JobScraperController {
     try {
       const jobs = await JobScraperController.jobEvaluationService.getInterestingJobs();
 
+      // Get unique sources for filter
+      const sources = [...new Set(jobs.map((e: any) => e.jobs?.job_sources?.name).filter(Boolean))];
+      const sourceCounts: Record<string, number> = {};
+      jobs.forEach((e: any) => {
+        const source = e.jobs?.job_sources?.name || 'unknown';
+        sourceCounts[source] = (sourceCounts[source] || 0) + 1;
+      });
+
       const html = `
 <!DOCTYPE html>
 <html lang="en">
@@ -454,7 +462,7 @@ export class JobScraperController {
       background: #fff;
       padding: 1rem 1.5rem;
       border-radius: 8px;
-      margin-bottom: 2rem;
+      margin-bottom: 1rem;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     .stats span {
@@ -463,6 +471,42 @@ export class JobScraperController {
     }
     .stats strong {
       color: #2563eb;
+    }
+    .filters {
+      background: #fff;
+      padding: 1rem 1.5rem;
+      border-radius: 8px;
+      margin-bottom: 2rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .filters label {
+      font-weight: 500;
+      color: #666;
+    }
+    .filter-btn {
+      padding: 0.5rem 1rem;
+      border: 2px solid #e5e7eb;
+      background: #fff;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+    .filter-btn:hover {
+      border-color: #2563eb;
+    }
+    .filter-btn.active {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #fff;
+    }
+    .filter-btn .count {
+      margin-left: 0.25rem;
+      opacity: 0.7;
     }
     .job-list {
       display: flex;
@@ -475,6 +519,9 @@ export class JobScraperController {
       padding: 1.5rem;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
       transition: box-shadow 0.2s;
+    }
+    .job-card.hidden {
+      display: none;
     }
     .job-card:hover {
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -524,6 +571,21 @@ export class JobScraperController {
     .score-tech {
       background: #f3e8ff;
       color: #6b21a8;
+    }
+    .source-badge {
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .source-badge.swissdevjobs {
+      background: #fef2f2;
+      color: #dc2626;
+    }
+    .source-badge.arbeitnow {
+      background: #f0fdf4;
+      color: #16a34a;
     }
     .job-details {
       display: grid;
@@ -617,6 +679,9 @@ export class JobScraperController {
       color: #666;
       margin-bottom: 0.5rem;
     }
+    #visible-count {
+      color: #2563eb;
+    }
   </style>
 </head>
 <body>
@@ -624,7 +689,20 @@ export class JobScraperController {
     <h1>Interesting Jobs</h1>
     <div class="stats">
       <span>Total: <strong>${jobs.length}</strong> jobs</span>
+      <span>Showing: <strong id="visible-count">${jobs.length}</strong></span>
       <span>Updated: <strong>${new Date().toLocaleString('de-CH')}</strong></span>
+    </div>
+
+    <div class="filters">
+      <label>Source:</label>
+      <button class="filter-btn active" data-source="all" onclick="filterBySource('all')">
+        All<span class="count">(${jobs.length})</span>
+      </button>
+      ${sources.map((source: string) => `
+        <button class="filter-btn" data-source="${source}" onclick="filterBySource('${source}')">
+          ${source}<span class="count">(${sourceCounts[source] || 0})</span>
+        </button>
+      `).join('')}
     </div>
 
     ${jobs.length === 0 ? `
@@ -636,14 +714,17 @@ export class JobScraperController {
       <div class="job-list">
         ${jobs.map((evaluation: any) => {
           const job = evaluation.jobs;
+          const sourceName = job?.job_sources?.name || 'unknown';
+          const sourceDisplayName = job?.job_sources?.display_name || sourceName;
           return `
-          <div class="job-card">
+          <div class="job-card" data-source="${sourceName}">
             <div class="job-header">
               <div>
                 <a href="${job?.job_url || '#'}" target="_blank" class="job-title">${job?.job_title || 'Unknown Title'}</a>
                 <div class="job-company">${job?.company || 'Unknown Company'} • ${job?.location || 'Unknown Location'}</div>
               </div>
               <div class="scores">
+                <span class="source-badge ${sourceName}">${sourceDisplayName}</span>
                 <span class="score-badge score-overall ${evaluation.overall_score >= 8 ? '' : 'medium'}">${evaluation.overall_score}/10</span>
                 <span class="score-badge score-remote">Remote: ${evaluation.remote_score}/5</span>
                 <span class="score-badge score-tech">Tech: ${evaluation.tech_match_score}/5</span>
@@ -689,6 +770,31 @@ export class JobScraperController {
       </div>
     `}
   </div>
+
+  <script>
+    function filterBySource(source) {
+      // Update active button
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.source === source);
+      });
+
+      // Filter cards
+      const cards = document.querySelectorAll('.job-card');
+      let visibleCount = 0;
+
+      cards.forEach(card => {
+        if (source === 'all' || card.dataset.source === source) {
+          card.classList.remove('hidden');
+          visibleCount++;
+        } else {
+          card.classList.add('hidden');
+        }
+      });
+
+      // Update visible count
+      document.getElementById('visible-count').textContent = visibleCount;
+    }
+  </script>
 </body>
 </html>
       `;
