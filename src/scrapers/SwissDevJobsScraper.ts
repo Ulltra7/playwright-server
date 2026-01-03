@@ -343,51 +343,104 @@ export class SwissDevJobsScraper extends JobScraper {
           timeout: 5000,
         });
 
-        // Extract description from div with class job-details-section-box that contains "Description" title
-        const description = await this.page.evaluate(() => {
+        // Extract full job ad content from all section boxes
+        const { description, requirements } = await this.page.evaluate(() => {
           const sectionBoxes = Array.from(
             document.querySelectorAll(".job-details-section-box")
           );
 
-          // Find the section box that contains "Description" in its title
-          const descriptionBox = sectionBoxes.find((box) => {
-            const titleElement = box.querySelector(
-              "h2, h3, h4, .section-title"
-            );
-            return (
-              titleElement &&
-              titleElement.textContent?.toLowerCase().includes("description")
-            );
-          });
+          // Define the order of sections we want to extract
+          const sectionOrder = [
+            "requirements",
+            "responsibilities",
+            "description",
+            "benefits",
+            "methodology",
+          ];
 
-          if (descriptionBox) {
-            // Get all text content from the description box, excluding the title
-            const title = descriptionBox.querySelector(
-              "h2, h3, h4, .section-title"
-            );
-            if (title) {
-              title.remove(); // Remove title to get only description content
+          // Helper function to extract section content
+          const extractSectionContent = (box: Element): { title: string; content: string } => {
+            const titleElement = box.querySelector("h2, h3, h4, .section-title");
+            const title = titleElement?.textContent?.trim() || "";
+
+            // Try to get content from format-with-white-space div first
+            const formattedContent = box.querySelector(".format-with-white-space");
+            if (formattedContent) {
+              return { title, content: formattedContent.textContent?.trim() || "" };
             }
-            return descriptionBox.textContent?.trim() || "";
+
+            // For benefits section, extract benefit items
+            const benefitItems = box.querySelectorAll('[class*="benefit"]');
+            if (benefitItems.length > 0) {
+              const benefits = Array.from(box.querySelectorAll(".text-small.d-flex span"))
+                .map(span => span.textContent?.trim())
+                .filter(Boolean)
+                .join("\n- ");
+              if (benefits) {
+                return { title, content: "- " + benefits };
+              }
+            }
+
+            // For methodology section, extract checked items
+            const methodologyItems = box.querySelectorAll(".sdj-checkbox-container");
+            if (methodologyItems.length > 0) {
+              const methods = Array.from(methodologyItems)
+                .map(item => item.textContent?.trim())
+                .filter(Boolean)
+                .join(", ");
+              if (methods) {
+                return { title, content: methods };
+              }
+            }
+
+            // Fallback: get text content excluding the title
+            const clone = box.cloneNode(true) as Element;
+            const cloneTitle = clone.querySelector("h2, h3, h4, .section-title");
+            if (cloneTitle) {
+              cloneTitle.remove();
+            }
+            return { title, content: clone.textContent?.trim() || "" };
+          };
+
+          // Extract all sections
+          const sections: { [key: string]: string } = {};
+          let requirementsContent = "";
+
+          for (const box of sectionBoxes) {
+            const { title, content } = extractSectionContent(box);
+            const titleLower = title.toLowerCase();
+
+            // Store requirements separately
+            if (titleLower.includes("requirements")) {
+              requirementsContent = content;
+            }
+
+            // Map to section order
+            for (const sectionName of sectionOrder) {
+              if (titleLower.includes(sectionName)) {
+                sections[sectionName] = `## ${title}\n${content}`;
+                break;
+              }
+            }
           }
 
-          // Fallback: try to find any section with description-like content
-          const fallbackBox = sectionBoxes.find((box) => {
-            const text = box.textContent?.toLowerCase() || "";
-            return (
-              text.includes("responsibilities") ||
-              text.includes("what you") ||
-              text.includes("role")
-            );
-          });
+          // Build full description in order
+          const fullDescription = sectionOrder
+            .filter(section => sections[section])
+            .map(section => sections[section])
+            .join("\n\n");
 
-          return fallbackBox ? fallbackBox.textContent?.trim() || "" : "";
+          return {
+            description: fullDescription || "No description available",
+            requirements: requirementsContent,
+          };
         });
 
-        // Add description to job object
+        // Add description and requirements to job object
         const jobWithDescription: JobInput = {
           ...job,
           description: description || "No description available",
+          requirements: requirements || undefined,
         };
 
         jobsWithDescriptions.push(jobWithDescription);
@@ -421,218 +474,4 @@ export class SwissDevJobsScraper extends JobScraper {
     );
     return jobsWithDescriptions;
   }
-
-  private async scrollToLoadAllJobs(): Promise<void> {
-    if (!this.page) {
-      throw new Error("Browser not initialized");
-    }
-
-    try {
-      let previousJobCount = 0;
-      let currentJobCount = 0;
-      let scrollAttempts = 0;
-      const maxScrollAttempts = 100; // Increased for incremental scrolling
-      const scrollDelay = 800; // Faster for incremental scrolling
-      let noChangeAttempts = 0;
-      let allJobsSet = new Set<string>(); // Track unique jobs
-
-      console.log("🔄 Starting incremental scroll for virtualized list...");
-
-      // Get initial count
-      const initialCards = await this.page.$$(".card");
-      currentJobCount = initialCards.length;
-      console.log(`📊 Initial job count: ${currentJobCount} cards`);
-
-      // First, find the container and get its dimensions
-      const containerInfo = await this.page.evaluate(() => {
-        const scrollableContainers = Array.from(
-          document.querySelectorAll("div")
-        ).filter((div) => {
-          const style = window.getComputedStyle(div);
-          return (
-            style.overflow === "auto" &&
-            style.position === "relative" &&
-            (style.willChange === "transform" ||
-              div.style.willChange === "transform")
-          );
-        });
-
-        if (scrollableContainers.length > 0) {
-          const container = scrollableContainers[0];
-          return {
-            found: true,
-            scrollHeight: container.scrollHeight,
-            clientHeight: container.clientHeight,
-            maxScroll: container.scrollHeight - container.clientHeight,
-          };
-        }
-        return {
-          found: false,
-          scrollHeight: 0,
-          clientHeight: 0,
-          maxScroll: 0,
-        };
-      });
-
-      if (!containerInfo.found || containerInfo.maxScroll <= 0) {
-        console.log(
-          "❌ No virtualized container found or container not scrollable"
-        );
-        return;
-      }
-
-      console.log(
-        `📐 Container info: scrollHeight=${containerInfo.scrollHeight}, clientHeight=${containerInfo.clientHeight}`
-      );
-
-      // Calculate incremental scroll positions
-      const scrollIncrement = Math.max(containerInfo.clientHeight / 3, 100); // Scroll 1/3 viewport at a time
-      const totalScrollPositions = Math.ceil(
-        containerInfo.maxScroll / scrollIncrement
-      );
-
-      console.log(
-        `📜 Will scroll incrementally through ${totalScrollPositions} positions`
-      );
-
-      // Scroll incrementally through the entire list
-      for (
-        let position = 0;
-        position <= containerInfo.maxScroll;
-        position += scrollIncrement
-      ) {
-        scrollAttempts++;
-
-        console.log(
-          `📜 Incremental scroll ${scrollAttempts}: position ${position}/${containerInfo.maxScroll}`
-        );
-
-        // Scroll to specific position
-        const scrollResult = await this.page.evaluate((targetPosition) => {
-          const scrollableContainers = Array.from(
-            document.querySelectorAll("div")
-          ).filter((div) => {
-            const style = window.getComputedStyle(div);
-            return (
-              style.overflow === "auto" &&
-              style.position === "relative" &&
-              (style.willChange === "transform" ||
-                div.style.willChange === "transform")
-            );
-          });
-
-          if (scrollableContainers.length > 0) {
-            const container = scrollableContainers[0];
-            const beforeScrollTop = container.scrollTop;
-
-            // Scroll to the target position
-            container.scrollTop = targetPosition;
-
-            // Dispatch scroll event to trigger virtualization
-            container.dispatchEvent(new Event("scroll", { bubbles: true }));
-
-            const afterScrollTop = container.scrollTop;
-
-            return {
-              success: true,
-              beforeScrollTop,
-              afterScrollTop,
-              targetPosition,
-              actualPosition: container.scrollTop,
-            };
-          }
-          return { success: false };
-        }, position);
-
-        console.log(
-          `📊 Scroll result: ${scrollResult.beforeScrollTop} → ${scrollResult.afterScrollTop} (target: ${position})`
-        );
-
-        // Wait for virtualized content to render
-        await this.page.waitForTimeout(scrollDelay);
-
-        // Collect currently visible jobs to track unique ones
-        const currentJobs = await this.page.evaluate(() => {
-          const cards = Array.from(document.querySelectorAll(".card"));
-          return cards
-            .map((card, index) => {
-              const titleElement = card.querySelector(
-                'a[href*="job"], h1, h2, h3, h4, h5, h6, .job-title, [class*="title"]'
-              );
-              const title = titleElement
-                ? titleElement.textContent?.trim()
-                : "";
-              const linkElement = card.querySelector('a[href*="job"]');
-              const url = linkElement ? linkElement.getAttribute("href") : "";
-              return {
-                title,
-                url,
-                uniqueId: `${title}_${url}`.replace(/\s+/g, "_"),
-              };
-            })
-            .filter((job) => job.title && job.title.length > 0);
-        });
-
-        // Add to our set of all jobs
-        currentJobs.forEach((job) => allJobsSet.add(job.uniqueId));
-
-        const newCurrentJobCount = currentJobs.length;
-        console.log(
-          `📋 Currently visible: ${newCurrentJobCount} jobs, Total unique collected: ${allJobsSet.size}`
-        );
-
-        // Progress update
-        if (allJobsSet.size > previousJobCount) {
-          console.log(
-            `📈 Progress: +${
-              allJobsSet.size - previousJobCount
-            } new unique jobs (total: ${allJobsSet.size})`
-          );
-          previousJobCount = allJobsSet.size;
-          noChangeAttempts = 0; // Reset since we found new jobs
-        } else {
-          noChangeAttempts++;
-        }
-
-        // Break if we haven't found new jobs for a while
-        if (noChangeAttempts >= 10) {
-          console.log(
-            "🛑 No new unique jobs found for 10 attempts, ending incremental scroll"
-          );
-          break;
-        }
-
-        // Safety check
-        if (scrollAttempts >= maxScrollAttempts) {
-          console.log("🛑 Reached maximum scroll attempts");
-          break;
-        }
-      }
-
-      console.log(
-        `🏁 Incremental scroll completed after ${scrollAttempts} attempts`
-      );
-      console.log(`📊 Total unique jobs discovered: ${allJobsSet.size}`);
-
-      // Final scroll to top to see all jobs and then scroll through once more to collect everything
-      await this.page.evaluate(() => {
-        const container = Array.from(document.querySelectorAll("div")).find(
-          (div) => {
-            const style = window.getComputedStyle(div);
-            return style.overflow === "auto" && style.position === "relative";
-          }
-        );
-        if (container) {
-          container.scrollTop = 0;
-        }
-      });
-
-      await this.page.waitForTimeout(1000);
-    } catch (error) {
-      console.error("❌ Error during incremental scroll:", error);
-      // Continue anyway with whatever jobs we have loaded
-    }
-  }
-
-  // ...existing code...
 }

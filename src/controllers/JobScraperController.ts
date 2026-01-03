@@ -4,11 +4,13 @@ import { ScraperResponse } from "../types/job";
 import { SupabaseService, JobApplication } from "../services/SupabaseService";
 import { JobApplicationService, JobApplicationResult } from "../services/JobApplicationService";
 import { CronJobService } from "../services/CronJobService";
+import { JobEvaluationService } from "../services/JobEvaluationService";
 import { MAIN_ROLE_FILTERS } from "../config/roleFilters";
 
 export class JobScraperController {
   private static supabaseService = new SupabaseService();
   private static cronJobService = new CronJobService();
+  private static jobEvaluationService = new JobEvaluationService();
 
   static async scrapeSwissDevJobs(req: Request, res: Response): Promise<void> {
     try {
@@ -409,6 +411,300 @@ export class JobScraperController {
         error: error instanceof Error ? error.message : "Unknown error",
         timestamp: new Date().toISOString(),
       });
+    }
+  }
+
+  // Get interesting jobs HTML page
+  static async getInterestingJobsPage(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    try {
+      const jobs = await JobScraperController.jobEvaluationService.getInterestingJobs();
+
+      const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interesting Jobs</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      line-height: 1.6;
+      padding: 2rem;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      margin-bottom: 1rem;
+      color: #1a1a1a;
+    }
+    .stats {
+      background: #fff;
+      padding: 1rem 1.5rem;
+      border-radius: 8px;
+      margin-bottom: 2rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .stats span {
+      margin-right: 2rem;
+      color: #666;
+    }
+    .stats strong {
+      color: #2563eb;
+    }
+    .job-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .job-card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1.5rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      transition: box-shadow 0.2s;
+    }
+    .job-card:hover {
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .job-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 1rem;
+    }
+    .job-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #1a1a1a;
+      text-decoration: none;
+    }
+    .job-title:hover {
+      color: #2563eb;
+    }
+    .job-company {
+      color: #666;
+      margin-top: 0.25rem;
+    }
+    .scores {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .score-badge {
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .score-overall {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .score-overall.medium {
+      background: #fef9c3;
+      color: #854d0e;
+    }
+    .score-remote {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+    .score-tech {
+      background: #f3e8ff;
+      color: #6b21a8;
+    }
+    .job-details {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin: 1rem 0;
+      padding: 1rem 0;
+      border-top: 1px solid #eee;
+      border-bottom: 1px solid #eee;
+    }
+    .detail-item {
+      display: flex;
+      flex-direction: column;
+    }
+    .detail-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 0.25rem;
+    }
+    .detail-value {
+      font-weight: 500;
+    }
+    .remote-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+    .remote-badge.remote {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .remote-badge.hybrid {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+    .remote-badge.onsite {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    .remote-badge.unknown {
+      background: #f3f4f6;
+      color: #6b7280;
+    }
+    .tech-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .tech-tag {
+      background: #f3f4f6;
+      color: #374151;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+    }
+    .tech-tag.matched {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .reasoning {
+      margin-top: 1rem;
+      padding: 1rem;
+      background: #f9fafb;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      color: #555;
+    }
+    .apply-btn {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: 0.5rem 1rem;
+      background: #2563eb;
+      color: #fff;
+      text-decoration: none;
+      border-radius: 6px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+    .apply-btn:hover {
+      background: #1d4ed8;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      background: #fff;
+      border-radius: 8px;
+    }
+    .empty-state h2 {
+      color: #666;
+      margin-bottom: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Interesting Jobs</h1>
+    <div class="stats">
+      <span>Total: <strong>${jobs.length}</strong> jobs</span>
+      <span>Updated: <strong>${new Date().toLocaleString('de-CH')}</strong></span>
+    </div>
+
+    ${jobs.length === 0 ? `
+      <div class="empty-state">
+        <h2>No interesting jobs found yet</h2>
+        <p>Run the job evaluation first: <code>yarn evaluate:jobs</code></p>
+      </div>
+    ` : `
+      <div class="job-list">
+        ${jobs.map((evaluation: any) => {
+          const job = evaluation.jobs;
+          return `
+          <div class="job-card">
+            <div class="job-header">
+              <div>
+                <a href="${job?.job_url || '#'}" target="_blank" class="job-title">${job?.job_title || 'Unknown Title'}</a>
+                <div class="job-company">${job?.company || 'Unknown Company'} • ${job?.location || 'Unknown Location'}</div>
+              </div>
+              <div class="scores">
+                <span class="score-badge score-overall ${evaluation.overall_score >= 8 ? '' : 'medium'}">${evaluation.overall_score}/10</span>
+                <span class="score-badge score-remote">Remote: ${evaluation.remote_score}/5</span>
+                <span class="score-badge score-tech">Tech: ${evaluation.tech_match_score}/5</span>
+              </div>
+            </div>
+
+            <div class="job-details">
+              <div class="detail-item">
+                <span class="detail-label">Remote Type</span>
+                <span class="detail-value">
+                  <span class="remote-badge ${evaluation.remote_type}">${evaluation.remote_type}${evaluation.remote_days_per_week ? ` (${evaluation.remote_days_per_week} days/week)` : ''}</span>
+                </span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Seniority</span>
+                <span class="detail-value">${evaluation.seniority} ${evaluation.seniority_match ? '✓' : ''}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Languages</span>
+                <span class="detail-value">${evaluation.required_languages?.join(', ') || 'Not specified'} ${evaluation.language_match ? '✓' : ''}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Domain Fit</span>
+                <span class="detail-value">${evaluation.domain_relevance_score}/5</span>
+              </div>
+            </div>
+
+            <div class="detail-item">
+              <span class="detail-label">Matched Technologies</span>
+              <div class="tech-list">
+                ${(evaluation.matched_technologies || []).map((tech: string) => `<span class="tech-tag matched">${tech}</span>`).join('')}
+              </div>
+            </div>
+
+            <div class="reasoning">
+              <strong>AI Analysis:</strong> ${evaluation.ai_reasoning}
+            </div>
+
+            <a href="${job?.job_url || '#'}" target="_blank" class="apply-btn">View Job →</a>
+          </div>
+          `;
+        }).join('')}
+      </div>
+    `}
+  </div>
+</body>
+</html>
+      `;
+
+      res.setHeader('Content-Type', 'text/html');
+      res.status(200).send(html);
+    } catch (error) {
+      console.error("❌ Error fetching interesting jobs:", error);
+      res.status(500).send(`
+        <html>
+          <body>
+            <h1>Error</h1>
+            <p>Failed to load interesting jobs: ${error instanceof Error ? error.message : 'Unknown error'}</p>
+          </body>
+        </html>
+      `);
     }
   }
 }

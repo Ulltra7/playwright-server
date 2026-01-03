@@ -20,4 +20,5 @@ const cronJobService = new CronJobService();
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   cronJobService.startDailyJobScraping();
+  cronJobService.startDailyJobEvaluation();
 });

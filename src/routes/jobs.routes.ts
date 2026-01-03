@@ -16,4 +16,7 @@ router.get("/sources", JobScraperController.getJobSources);
 router.get("/technologies", JobScraperController.getTechnologies);
 router.get("/role-filters", JobScraperController.getRoleFilters);
 
+// Interesting jobs HTML page
+router.get("/interesting", JobScraperController.getInterestingJobsPage);
+
 export default router;

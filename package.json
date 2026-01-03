@@ -13,16 +13,20 @@
     "scrape:all": "ts-node src/scripts/run-cron-job.ts",
     "scrape:arbeitnow": "ts-node src/test-arbeitnow.ts",
     "scrape:swissdev": "ts-node src/scripts/scrapeSwissDevJobs.ts",
-    "cleanup:non-it": "ts-node src/scripts/cleanup-non-it-jobs.ts"
+    "cleanup:non-it": "ts-node src/scripts/cleanup-non-it-jobs.ts",
+    "evaluate:jobs": "ts-node src/scripts/run-job-evaluation.ts"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.2",
     "@supabase/supabase-js": "^2.50.0",
+    "ai": "^6.0.6",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^4.18.2",
     "node-cron": "^4.1.0",
     "playwright": "^1.53.1",
-    "playwright-chromium": "^1.40.0"
+    "playwright-chromium": "^1.40.0",
+    "zod": "^4.3.4"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
